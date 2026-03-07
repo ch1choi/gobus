@@ -1,0 +1,15 @@
+{
+  "name": "gobus-server",
+  "version": "1.0.0",
+  "description": "GO BUS! API + Web Push scheduler",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "node-cron": "^3.0.3",
+    "sql.js": "^1.11.0",
+    "web-push": "^3.6.7"
+  }
+}
