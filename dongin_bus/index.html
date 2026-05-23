@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>동인여객 실시간 환승 도우미</title>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; background-color: #f4f7f6; margin: 0; padding: 0; }
+        .header { background-color: #00529b; color: white; padding: 20px; text-align: center; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        .bus-badge { background-color: #ffc107; color: #333; padding: 5px 20px; border-radius: 20px; font-weight: bold; display: inline-block; margin-bottom: 10px; font-size: 18px; }
+        .container { padding: 15px; padding-bottom: 100px; }
+        .btn-group { display: flex; justify-content: space-between; margin-bottom: 15px; }
+        .direction-btn { width: 48%; padding: 10px 5px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; transition: 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.1); line-height: 1.3; }
+        .btn-up { background-color: #4CAF50; color: white; }
+        .btn-down { background-color: #f44336; color: white; }
+        .btn-active { border: 3px solid #333; transform: scale(0.98); }
+        .direction-btn:disabled { opacity: 0.5; filter: grayscale(50%); cursor: not-allowed; }
+        .stop-list { list-style: none; padding: 0; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .stop-item { padding: 16px; border-bottom: 1px solid #eee; display: flex; flex-direction: column; }
+        .stop-header { display: flex; justify-content: space-between; width: 100%; align-items: center; cursor: pointer; }
+        .transfer-btn { font-size: 13px; color: #00529b; background: white; border: 1px solid #00529b; padding: 6px 10px; border-radius: 4px; font-weight: bold; }
+        .transfer-box { display: none; margin-top: 10px; padding: 12px; background-color: #e8f4f8; border-radius: 5px; font-size: 14px; border-left: 4px solid #00529b; }
+        .gps-info { background-color: #e3f2fd; padding: 10px; margin-bottom: 15px; border-radius: 8px; font-size: 14px; text-align: center; color: #1976d2; border: 1px solid #bbdefb; }
+        .all-view-btn { background-color: #00529b; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: bold; width: 100%; cursor: pointer; margin-top: 10px; }
+        .route-badge { color: #00529b; font-weight: bold; font-size: 16px; background: #e3f2fd; padding: 2px 6px; border-radius: 4px; }
+        .arrival-item { margin-bottom: 12px; font-size: 15px; background: #fdfdfd; padding: 10px; border-radius: 6px; border: 1px solid #eee; }
+        .crew-screen { display: none; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #f4f7f6; padding: 20px; }
+        .crew-btn { width: 100%; max-width: 300px; padding: 20px; margin-bottom: 15px; font-size: 22px; font-weight: bold; background-color: white; color: #00529b; border: 2px solid #00529b; border-radius: 12px; cursor: pointer; }
+        .fab-refresh { position: fixed; bottom: 30px; right: 20px; background-color: #00529b; color: white; border: none; border-radius: 50%; width: 60px; height: 60px; font-size: 26px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; cursor: pointer; }
+        #toast { visibility: hidden; min-width: 200px; background-color: #333; color: #fff; text-align: center; border-radius: 30px; padding: 10px; position: fixed; z-index: 1001; left: 50%; bottom: 110px; transform: translateX(-50%); opacity: 0; transition: 0.3s; }
+        #toast.show { visibility: visible; opacity: 1; }
+        .nav-link { font-size: 12px; color: #ffc107; text-decoration: underline; margin-left: 8px; cursor: pointer; font-weight: normal; }
+    </style>
+</head>
+<body>
+
+    <div id="crew-selection-screen" class="crew-screen">
+        <h1 style="color:#00529b;">🚍 승무원 노선 선택</h1>
+        <button class="crew-btn" onclick="startApp('108')">108번</button>
+        <button class="crew-btn" onclick="startApp('501')">501번</button>
+        <button class="crew-btn" onclick="startApp('511')">511번</button>
+        <button class="crew-btn" onclick="startApp('513')">513번</button>
+    </div>
+
+    <div id="main-app-screen" style="display: none;">
+        <div class="header">
+            <div id="badge-area" class="bus-badge">🚌 <span id="badge-text">---</span></div>
+            <h2 style="margin: 0; font-size: 20px;">
+                실시간 환승 도우미 <span style="font-size:12px; color:#ffc107;">v4.0</span>
+                <span id="crew-reset-link" class="nav-link" onclick="location.href=window.location.pathname" style="display:none;">노선변경</span>
+            </h2>
+        </div>
+        <div class="container">
+            <div id="gps-status" class="gps-info">⏳ 위치 정보 확인 중... (권한을 허용해주세요)</div>
+            <div class="btn-group">
+                <button id="btn-up" class="direction-btn btn-up" onclick="setDirection('up')">상행</button>
+                <button id="btn-down" class="direction-btn btn-down" onclick="setDirection('down')">하행</button>
+            </div>
+            <ul id="stop-list-container" class="stop-list"></ul>
+        </div>
+        <button class="fab-refresh" onclick="forceRefresh()">🔄</button>
+        <div id="toast">새로고침 완료</div>
+    </div>
+
+    <script>
+        let currentRoute = "";
+        let currentDirection = 'up';
+        let userLocation = null;
+        let isCrewMode = false;
+        
+        // 🚨 정렬 캐시 및 설정 변수 (시간순/번호순)
+        window.transferCache = {};
+        window.currentSort = 'route';
+
+        const routeSummary = {
+            "108": { up: "낭월동 ➔ 면허시험장 ➔ 남선공원 ➔ 법원·검찰청 ➔ 충대농대", down: "충대농대 ➔ 법원·검찰청 ➔ 남선공원 ➔ 면허시험장 ➔ 낭월동" },
+            "501": { up: "비래동 ➔ 대전역·중앙시장 ➔ 면허시험장 ➔ 마전", down: "마전 ➔ 면허시험장 ➔ 대전역·중앙시장 ➔ 비래동" },
+            "511": { up: "낭월동 ➔ 면허시험장 ➔ 대전역·중앙시장 ➔ 중촌동", down: "중촌동 ➔ 대전역·중앙시장 ➔ 면허시험장 ➔ 낭월동" },
+            "513": { up: "낭월동 ➔ 면허시험장 ➔ 성모병원 ➔ 서대전네거리 ➔ 안영동", down: "안영동 ➔ 서대전네거리 ➔ 성모병원 ➔ 면허시험장 ➔ 낭월동" }
+        };
+
+        // 🚨 기사님의 전체 데이터가 100% 결합된 완성본 (오류 원천 차단) 🚨
+        const allBusData = {
+            "108": {
+                up: [
+                    { name: "낭월공영차고지기점", sid: "13820", lat: 36.26705, lng: 127.47933 }, { name: "낭월공영차고지", sid: "9005538", lat: 36.268803, lng: 127.47771 }, { name: "남대전종합물류단지", sid: "13780", lat: 36.272915, lng: 127.47184 }, { name: "석천들마을아파트", sid: "13410", lat: 36.27638, lng: 127.467415 }, { name: "산내초등학교", sid: "13460", lat: 36.278145, lng: 127.46925 }, { name: "e편한세상아파트", sid: "13440", lat: 36.280586, lng: 127.46806 }, { name: "산내주공아파트", sid: "13390", lat: 36.28429, lng: 127.466095 }, { name: "오투그란데아파트", sid: "13690", lat: 36.28764, lng: 127.464714 }, { name: "운전면허시험장", sid: "13670", lat: 36.290543, lng: 127.46309 }, { name: "대성동", sid: "13650", lat: 36.294106, lng: 127.461685 }, { name: "대성삼거리", sid: "13600", lat: 36.2963, lng: 127.45936 }, { name: "옥계동", sid: "20980", lat: 36.29909, lng: 127.454544 }, { name: "은혜아파트", sid: "20960", lat: 36.301216, lng: 127.452736 }, { name: "호동", sid: "20940", lat: 36.303894, lng: 127.45041 }, { name: "석교치안센터", sid: "20920", lat: 36.307575, lng: 127.44639 }, { name: "석교동행정복지센터", sid: "20900", lat: 36.309025, lng: 127.443535 }, { name: "동명중학교", sid: "20870", lat: 36.311237, lng: 127.43911 }, { name: "부사오거리", sid: "21110", lat: 36.31336, lng: 127.43381 }, { name: "청란여자고등학교", sid: "21070", lat: 36.313583, lng: 127.43115 }, { name: "남대전고등학교", sid: "21060", lat: 36.31431, lng: 127.42818 }, { name: "보문오거리", sid: "20740", lat: 36.318096, lng: 127.42571 }, { name: "대전중학교", sid: "20710", lat: 36.320004, lng: 127.42453 }, { name: "대고오거리", sid: "20650", lat: 36.323544, lng: 127.4229 }, { name: "중구청", sid: "20630", lat: 36.32508, lng: 127.42239 }, { name: "나라키움청사/3.8기념관", sid: "20220", lat: 36.328785, lng: 127.420654 }, { name: "국립농산물품질관리원", sid: "20200", lat: 36.330765, lng: 127.41955 }, { name: "선화동천주교회", sid: "20130", lat: 36.335632, lng: 127.41735 }, { name: "중앙중고등학교", sid: "20510", lat: 36.339115, lng: 127.413025 }, { name: "중촌초등학교", sid: "20470", lat: 36.34149, lng: 127.410034 }, { name: "남선공원네거리", sid: "31270", lat: 36.345898, lng: 127.40215 }, { name: "남선공원종합체육관", sid: "31320", lat: 36.349113, lng: 127.399124 }, { name: "충남고등학교", sid: "32580", lat: 36.349094, lng: 127.39294 }, { name: "목련아파트", sid: "32470", lat: 36.349995, lng: 127.390335 }, { name: "법원.검찰청", sid: "32480", lat: 36.354385, lng: 127.390335 }, { name: "사학연금회관", sid: "32490", lat: 36.35865, lng: 127.39041 }, { name: "정부대전청사남문", sid: "32240", lat: 36.35989, lng: 127.381134 }, { name: "선사유적지", sid: "32960", lat: 36.359932, lng: 127.37881 }, { name: "샛별아파트", sid: "32940", lat: 36.35993, lng: 127.376175 }, { name: "황실타운아파트", sid: "32840", lat: 36.35995, lng: 127.370865 }, { name: "하나로아파트", sid: "32790", lat: 36.35995, lng: 127.36659 }, { name: "월평역", sid: "32770", lat: 36.35873, lng: 127.362434 }, { name: "유림공원", sid: "45290", lat: 36.359795, lng: 127.35468 }, { name: "다솔아파트", sid: "42680", lat: 36.36134, lng: 127.34719 }, { name: "충남대산학연", sid: "42640", lat: 36.36533, lng: 127.34543 }, { name: "충남대도서관", sid: "42670", lat: 36.369488, lng: 127.34661 }, { name: "충대농대종점", sid: "9002736", lat: 36.36739, lng: 127.35208 }
+                ],
+                down: [
+                    { name: "충대농대종점", sid: "9002737", lat: 36.367615, lng: 127.35218 }, { name: "충남대도서관", sid: "42660", lat: 36.36881, lng: 127.34573 }, { name: "충남대산학연", sid: "42630", lat: 36.36524, lng: 127.345184 }, { name: "충남대학교입구", sid: "42650", lat: 36.361355, lng: 127.34603 }, { name: "홈플러스유성점", sid: "41390", lat: 36.359398, lng: 127.3545 }, { name: "월평역", sid: "35300", lat: 36.3585, lng: 127.36101 }, { name: "전원아파트", sid: "32780", lat: 36.35971, lng: 127.3657 }, { name: "누리아파트", sid: "32860", lat: 36.35968, lng: 127.371956 }, { name: "무지개아파트", sid: "32930", lat: 36.359646, lng: 127.376045 }, { name: "정부대전청사남문", sid: "32200", lat: 36.359634, lng: 127.38034 }, { name: "사학연금회관", sid: "32450", lat: 36.359146, lng: 127.39001 }, { name: "법원.검찰청", sid: "32440", lat: 36.35506, lng: 127.39004 }, { name: "목련아파트", sid: "34760", lat: 36.35047, lng: 127.39005 }, { name: "한가람아파트", sid: "32540", lat: 36.348835, lng: 127.392265 }, { name: "남선공원종합체육관", sid: "31240", lat: 36.348804, lng: 127.39831 }, { name: "남선공원네거리", sid: "31260", lat: 36.347336, lng: 127.401566 }, { name: "중촌초등학교", sid: "20480", lat: 36.341076, lng: 127.41007 }, { name: "중촌동행정복지센터", sid: "20520", lat: 36.338676, lng: 127.41313 }, { name: "세명요양병원", sid: "20140", lat: 36.33509, lng: 127.417625 }, { name: "국립농산물품질관리원", sid: "20180", lat: 36.330883, lng: 127.419235 }, { name: "나라키움청사/3.8기념관", sid: "20210", lat: 36.328552, lng: 127.420425 }, { name: "대고오거리", sid: "20640", lat: 36.324142, lng: 127.42239 }, { name: "대전중학교", sid: "20690", lat: 36.319958, lng: 127.42422 }, { name: "보문오거리", sid: "20730", lat: 36.318443, lng: 127.42512 }, { name: "남대전고등학교", sid: "21040", lat: 36.313843, lng: 127.42812 }, { name: "청란여자고등학교", sid: "21080", lat: 36.313366, lng: 127.430954 }, { name: "부사오거리", sid: "21130", lat: 36.312645, lng: 127.43552 }, { name: "동명중학교", sid: "20880", lat: 36.310787, lng: 127.43918 }, { name: "석교동행정복지센터", sid: "20890", lat: 36.309402, lng: 127.44198 }, { name: "석교치안센터", sid: "20910", lat: 36.307796, lng: 127.44515 }, { name: "호동", sid: "20930", lat: 36.3047, lng: 127.44925 }, { name: "은혜아파트", sid: "20950", lat: 36.301357, lng: 127.45215 }, { name: "옥계동", sid: "20970", lat: 36.298992, lng: 127.4542 }, { name: "옥계교", sid: "20990", lat: 36.297256, lng: 127.455696 }, { name: "대성삼거리", sid: "13610", lat: 36.29606, lng: 127.4596 }, { name: "운전면허시험장", sid: "13660", lat: 36.29111, lng: 127.46269 }, { name: "오투그란데아파트", sid: "13680", lat: 36.287144, lng: 127.464775 }, { name: "산내주공아파트", sid: "13400", lat: 36.283302, lng: 127.46642 }, { name: "e편한세상아파트", sid: "13430", lat: 36.281143, lng: 127.46756 }, { name: "산내초등학교", sid: "13450", lat: 36.278748, lng: 127.46878 }, { name: "석천들마을아파트", sid: "13420", lat: 36.276493, lng: 127.46816 }, { name: "남대전종합물류단지", sid: "13790", lat: 36.272728, lng: 127.47134 }, { name: "낭월공영차고지", sid: "13820", lat: 36.270203, lng: 127.47669 }
+                ]
+            },
+            "501": {
+                up: [
+                    { name: "비래동종점", sid: "51590", lat: 36.360744, lng: 127.45002 }, { name: "비래동", sid: "51570", lat: 36.35983, lng: 127.44932 }, { name: "만남웨딩홀", sid: "51540", lat: 36.35749, lng: 127.446815 }, { name: "비래검문소", sid: "51510", lat: 36.35701, lng: 127.44514 }, { name: "한신휴플러스", sid: "51020", lat: 36.35495, lng: 127.44406 }, { name: "적십자혈액원", sid: "51000", lat: 36.352783, lng: 127.44282 }, { name: "동부네거리", sid: "11870", lat: 36.35043, lng: 127.43968 }, { name: "복합터미널", sid: "11830", lat: 36.349014, lng: 127.43567 }, { name: "효촌마을아파트", sid: "11940", lat: 36.346275, lng: 127.43249 }, { name: "스마트뷰아파트", sid: "11960", lat: 36.343735, lng: 127.43398 }, { name: "성남네거리", sid: "11970", lat: 36.34042, lng: 127.43501 }, { name: "삼성초등학교", sid: "12310", lat: 36.336464, lng: 127.43009 }, { name: "대전역", sid: "12390", lat: 36.332737, lng: 127.431725 }, { name: "중앙시장", sid: "10050", lat: 36.32856, lng: 127.43393 }, { name: "원동네거리", sid: "10080", lat: 36.32597, lng: 127.435356 }, { name: "인동네거리", sid: "10100", lat: 36.32267, lng: 127.43716 }, { name: "인동현대아파트", sid: "10110", lat: 36.319748, lng: 127.43852 }, { name: "효동네거리", sid: "10170", lat: 36.316166, lng: 127.43991 }, { name: "문창시장", sid: "20850", lat: 36.31454, lng: 127.43825 }, { name: "부사오거리", sid: "21130", lat: 36.312645, lng: 127.43552 }, { name: "동명중학교", sid: "20880", lat: 36.310787, lng: 127.43918 }, { name: "석교동행정복지센터", sid: "20890", lat: 36.309402, lng: 127.44198 }, { name: "석교치안센터", sid: "20910", lat: 36.307796, lng: 127.44515 }, { name: "호동", sid: "20930", lat: 36.3047, lng: 127.44925 }, { name: "은혜아파트", sid: "20950", lat: 36.301357, lng: 127.45215 }, { name: "옥계동", sid: "20970", lat: 36.298992, lng: 127.4542 }, { name: "옥계교", sid: "20990", lat: 36.297256, lng: 127.455696 }, { name: "대성삼거리", sid: "13610", lat: 36.29606, lng: 127.4596 }, { name: "운전면허시험장", sid: "13660", lat: 36.29111, lng: 127.46269 }, { name: "오투그란데아파트", sid: "13680", lat: 36.287144, lng: 127.464775 }, { name: "산내주공아파트", sid: "13400", lat: 36.283302, lng: 127.46642 }, { name: "e편한세상아파트", sid: "13430", lat: 36.281143, lng: 127.46756 }, { name: "산내초등학교", sid: "13450", lat: 36.278748, lng: 127.46878 }, { name: "구도동", sid: "13800", lat: 36.273685, lng: 127.47303 }, { name: "삼괴동/덕산마을", sid: "13920", lat: 36.258083, lng: 127.47912 }, { name: "삼괴동/송촌마을", sid: "13900", lat: 36.254787, lng: 127.47794 }, { name: "공주마을", sid: "13880", lat: 36.252056, lng: 127.47736 }, { name: "소룡골입구", sid: "13860", lat: 36.244564, lng: 127.4736 }, { name: "상소동산림욕장", sid: "13840", lat: 36.23811, lng: 127.46818 }, { name: "산정마을", sid: "13980", lat: 36.234413, lng: 127.46263 }, { name: "상소동(노인병원)", sid: "13970", lat: 36.230034, lng: 127.45492 }, { name: "산흥초등학교", sid: "13950", lat: 36.228016, lng: 127.44788 }, { name: "청소년수련원", sid: "14090", lat: 36.226437, lng: 127.4451 }, { name: "하소1통", sid: "14050", lat: 36.223667, lng: 127.4429 }, { name: "하소2통", sid: "14030", lat: 36.2197, lng: 127.44092 }, { name: "옛터민속박물관", sid: "14750", lat: 36.21437, lng: 127.44132 }, { name: "대전제2시립노인병원", sid: "14020", lat: 36.21287, lng: 127.43957 }, { name: "가목정마을", sid: "14000", lat: 36.210876, lng: 127.438705 }, { name: "문글램핑", sid: "14940", lat: 36.20848, lng: 127.440315 }, { name: "만인산공원", sid: "14080", lat: 36.20359, lng: 127.443375 }, { name: "만인산휴양림", sid: "14110", lat: 36.200634, lng: 127.44938 }, { name: "태조대왕태실", sid: "74790", lat: 36.196735, lng: 127.45532 }, { name: "중부대입구", sid: "74510", lat: 36.1941, lng: 127.45693 }, { name: "중부대학교", sid: "74490", lat: 36.192757, lng: 127.452065 }, { name: "중부대입구", sid: "74500", lat: 36.193577, lng: 127.45555 }, { name: "마전.태봉마을", sid: "74530", lat: 36.19382, lng: 127.46045 }, { name: "추부중학교입구", sid: "74660", lat: 36.191906, lng: 127.46559 }, { name: "마전종점", sid: "74540", lat: 36.189888, lng: 127.4676 }
+                ],
+                down: [
+                    { name: "마전종점", sid: "9005122", lat: 36.189686, lng: 127.4667 }, { name: "추부중학교입구", sid: "74670", lat: 36.19117, lng: 127.46536 }, { name: "마전.태봉마을", sid: "74520", lat: 36.193974, lng: 127.46027 }, { name: "중부대입구", sid: "74760", lat: 36.194126, lng: 127.45752 }, { name: "중부대학교", sid: "74770", lat: 36.192608, lng: 127.45216 }, { name: "중부대입구", sid: "74780", lat: 36.193592, lng: 127.455666 }, { name: "태조대왕태실", sid: "74800", lat: 36.19569, lng: 127.45693 }, { name: "만인산휴양림", sid: "14120", lat: 36.20075, lng: 127.44946 }, { name: "만인산공원", sid: "14070", lat: 36.204174, lng: 127.44241 }, { name: "문글램핑", sid: "14950", lat: 36.208225, lng: 127.44033 }, { name: "가목정마을", sid: "14010", lat: 36.210796, lng: 127.43885 }, { name: "대전제2시립노인병원", sid: "14260", lat: 36.212765, lng: 127.43957 }, { name: "옛터민속박물관", sid: "14760", lat: 36.21416, lng: 127.441246 }, { name: "하소2통", sid: "14040", lat: 36.21922, lng: 127.44099 }, { name: "하소1통", sid: "14060", lat: 36.223465, lng: 127.442986 }, { name: "청소년수련원", sid: "14100", lat: 36.226402, lng: 127.445244 }, { name: "산흥초등학교", sid: "13940", lat: 36.227905, lng: 127.44764 }, { name: "상소동(노인병원)", sid: "13960", lat: 36.229843, lng: 127.45482 }, { name: "산정마을", sid: "13990", lat: 36.234993, lng: 127.463135 }, { name: "상소동산림욕장", sid: "13850", lat: 36.238365, lng: 127.46839 }, { name: "소룡골입구", sid: "13870", lat: 36.244488, lng: 127.47372 }, { name: "공주마을", sid: "13890", lat: 36.252087, lng: 127.47752 }, { name: "삼괴동/송촌마을", sid: "13910", lat: 36.254814, lng: 127.47807 }, { name: "삼괴동/덕산마을", sid: "13930", lat: 36.25751, lng: 127.478935 }, { name: "구도동", sid: "13810", lat: 36.273636, lng: 127.47339 }, { name: "산내초등학교", sid: "13460", lat: 36.278145, lng: 127.46925 }, { name: "e편한세상아파트", sid: "13440", lat: 36.280586, lng: 127.46806 }, { name: "산내주공아파트", sid: "13390", lat: 36.28429, lng: 127.466095 }, { name: "오투그란데아파트", sid: "13690", lat: 36.28764, lng: 127.464714 }, { name: "운전면허시험장", sid: "13670", lat: 36.290543, lng: 127.46309 }, { name: "대성동", sid: "13650", lat: 36.294106, lng: 127.461685 }, { name: "대성삼거리", sid: "13600", lat: 36.2963, lng: 127.45936 }, { name: "옥계동", sid: "20980", lat: 36.29909, lng: 127.454544 }, { name: "은혜아파트", sid: "20960", lat: 36.301216, lng: 127.452736 }, { name: "호동", sid: "20940", lat: 36.303894, lng: 127.45041 }, { name: "석교치안센터", sid: "20920", lat: 36.307575, lng: 127.44639 }, { name: "석교동행정복지센터", sid: "20900", lat: 36.309025, lng: 127.443535 }, { name: "동명중학교", sid: "20870", lat: 36.311237, lng: 127.43911 }, { name: "부사오거리", sid: "20840", lat: 36.31339, lng: 127.43592 }, { name: "문창시장", sid: "20860", lat: 36.314327, lng: 127.43836 }, { name: "효동네거리", sid: "10180", lat: 36.31648, lng: 127.44009 }, { name: "인동현대아파트", sid: "10130", lat: 36.319553, lng: 127.438934 }, { name: "신인동주민센터", sid: "10090", lat: 36.323513, lng: 127.437065 }, { name: "원동네거리", sid: "10070", lat: 36.32757, lng: 127.43485 }, { name: "대전역/역전시장", sid: "10040", lat: 36.32953, lng: 127.43368 }, { name: "대전역/하나은행", sid: "12380", lat: 36.333744, lng: 127.43168 }, { name: "삼성네거리", sid: "12320", lat: 36.33712, lng: 127.43016 }, { name: "계룡디지텍고입구", sid: "12340", lat: 36.33935, lng: 127.433395 }, { name: "성남네거리", sid: "11980", lat: 36.3417, lng: 127.43559 }, { name: "효촌마을아파트", sid: "11950", lat: 36.34516, lng: 127.43355 }, { name: "복합터미널", sid: "12010", lat: 36.349037, lng: 127.437195 }, { name: "동부네거리", sid: "11490", lat: 36.350216, lng: 127.44048 }, { name: "가양중학교입구", sid: "51010", lat: 36.352158, lng: 127.443 }, { name: "한신휴플러스", sid: "51500", lat: 36.355145, lng: 127.44463 }, { name: "비래동노인회관", sid: "53070", lat: 36.35615, lng: 127.44627 }, { name: "만남웨딩홀", sid: "51550", lat: 36.358112, lng: 127.44777 }, { name: "비래동", sid: "51580", lat: 36.35965, lng: 127.44942 }, { name: "비래동종점", sid: "51590", lat: 36.360878, lng: 127.4502 }
+                ]
+            },
+            "511": {
+                up: [
+                    { name: "낭월공영차고지기점", sid: "13820", lat: 36.26705, lng: 127.47933 }, { name: "낭월공영차고지", sid: "9005538", lat: 36.268803, lng: 127.47771 }, { name: "남대전종합물류단지", sid: "13780", lat: 36.272915, lng: 127.47184 }, { name: "석천들마을아파트", sid: "13410", lat: 36.27638, lng: 127.467415 }, { name: "산내초등학교", sid: "13460", lat: 36.278145, lng: 127.46925 }, { name: "e편한세상아파트", sid: "13440", lat: 36.280586, lng: 127.46806 }, { name: "산내주공아파트", sid: "13390", lat: 36.28429, lng: 127.466095 }, { name: "오투그란데아파트", sid: "13690", lat: 36.28764, lng: 127.464714 }, { name: "운전면허시험장", sid: "13670", lat: 36.290543, lng: 127.46309 }, { name: "대성동", sid: "13650", lat: 36.294106, lng: 127.461685 }, { name: "고산사입구", sid: "13630", lat: 36.2969, lng: 127.460045 }, { name: "하늘채2차아파트", sid: "13570", lat: 36.298443, lng: 127.45881 }, { name: "은어송초등학교", sid: "10410", lat: 36.301514, lng: 127.45674 }, { name: "남대전변전소", sid: "10340", lat: 36.30386, lng: 127.45436 }, { name: "가오주공아파트", sid: "10320", lat: 36.30562, lng: 127.45257 }, { name: "가오동", sid: "10300", lat: 36.308857, lng: 127.450066 }, { name: "천동주공아파트", sid: "10280", lat: 36.310764, lng: 127.448616 }, { name: "천동", sid: "10260", lat: 36.311913, lng: 127.44531 }, { name: "천석교", sid: "10230", lat: 36.312794, lng: 127.441505 }, { name: "효동네거리", sid: "10180", lat: 36.31648, lng: 127.44009 }, { name: "인동현대아파트", sid: "10130", lat: 36.319553, lng: 127.438934 }, { name: "신인동주민센터", sid: "10090", lat: 36.323513, lng: 127.437065 }, { name: "원동네거리", sid: "10070", lat: 36.32757, lng: 127.43485 }, { name: "대전역/역전시장", sid: "10040", lat: 36.32953, lng: 127.43368 }, { name: "목척교", sid: "12450", lat: 36.330685, lng: 127.43078 }, { name: "으능정이거리", sid: "23250", lat: 36.329296, lng: 127.42716 }, { name: "대전테크노파크", sid: "20270", lat: 36.327652, lng: 127.42272 }, { name: "나라키움청사/3.8기념관", sid: "20220", lat: 36.328785, lng: 127.420654 }, { name: "국립농산물품질관리원", sid: "20200", lat: 36.330765, lng: 127.41955 }, { name: "목동더샵리슈빌", sid: "20100", lat: 36.33311, lng: 127.41556 }, { name: "목동네거리", sid: "20500", lat: 36.335426, lng: 127.412254 }, { name: "선병원", sid: "20460", lat: 36.337505, lng: 127.40965 }, { name: "중촌SK뷰아파트", sid: "20430", lat: 36.339207, lng: 127.4075 }, { name: "중촌동과선교", sid: "23680", lat: 36.342793, lng: 127.409424 }, { name: "중촌주공2단지", sid: "23710", lat: 36.344543, lng: 127.41145 }, { name: "푸르지오아파트", sid: "23720", lat: 36.34668, lng: 127.40969 }, { name: "중촌주공2단지", sid: "20490", lat: 36.34463, lng: 127.4113 }
+                ],
+                down: [
+                    { name: "중촌주공2단지", sid: "9002651", lat: 36.343216, lng: 127.410576 }, { name: "중촌동과선교", sid: "23510", lat: 36.342884, lng: 127.40902 }, { name: "하늘아파트", sid: "20450", lat: 36.338833, lng: 127.40783 }, { name: "선병원", sid: "20360", lat: 36.33753, lng: 127.40931 }, { name: "목동네거리", sid: "20420", lat: 36.334953, lng: 127.4127 }, { name: "은행선화동주민센터", sid: "20110", lat: 36.332493, lng: 127.41676 }, { name: "국립농산물품질관리원", sid: "20180", lat: 36.330883, lng: 127.419235 }, { name: "나라키움청사/3.8기념관", sid: "20210", lat: 36.328552, lng: 127.420425 }, { name: "중앙로역4번출구", sid: "20680", lat: 36.327847, lng: 127.42407 }, { name: "으능정이거리", sid: "20050", lat: 36.3291, lng: 127.427444 }, { name: "대전역", sid: "12470", lat: 36.330814, lng: 127.43195 }, { name: "중앙시장", sid: "10030", lat: 36.329105, lng: 127.43359 }, { name: "원동네거리", sid: "10080", lat: 36.32597, lng: 127.435356 }, { name: "인동네거리", sid: "10100", lat: 36.32267, lng: 127.43716 }, { name: "인동현대아파트", sid: "10110", lat: 36.319748, lng: 127.43852 }, { name: "효동네거리", sid: "10170", lat: 36.316166, lng: 127.43991 }, { name: "천석교", sid: "10240", lat: 36.312378, lng: 127.441696 }, { name: "천동", sid: "10250", lat: 36.311775, lng: 127.44478 }, { name: "천동주공아파트", sid: "10270", lat: 36.310314, lng: 127.4487 }, { name: "가오동", sid: "10310", lat: 36.308, lng: 127.45078 }, { name: "가오주공아파트", sid: "10330", lat: 36.30534, lng: 127.45268 }, { name: "남대전변전소", sid: "10350", lat: 36.303745, lng: 127.454315 }, { name: "은어송초등학교", sid: "10400", lat: 36.30094, lng: 127.45711 }, { name: "은어송하늘채리버뷰", sid: "13590", lat: 36.298847, lng: 127.45835 }, { name: "고산사입구", sid: "13620", lat: 36.296646, lng: 127.46001 }, { name: "운전면허시험장", sid: "13660", lat: 36.29111, lng: 127.46269 }, { name: "오투그란데아파트", sid: "13680", lat: 36.287144, lng: 127.464775 }, { name: "산내주공아파트", sid: "13400", lat: 36.283302, lng: 127.46642 }, { name: "e편한세상아파트", sid: "13430", lat: 36.281143, lng: 127.46756 }, { name: "산내초등학교", sid: "13450", lat: 36.278748, lng: 127.46878 }, { name: "석천들마을아파트", sid: "13420", lat: 36.276493, lng: 127.46816 }, { name: "남대전종합물류단지", sid: "13790", lat: 36.272728, lng: 127.47134 }, { name: "낭월공영차고지", sid: "13820", lat: 36.270203, lng: 127.47669 }
+                ]
+            },
+            "513": {
+                up: [
+                    { name: "낭월공영차고지기점", sid: "13820", lat: 36.26705, lng: 127.47933 }, { name: "낭월공영차고지", sid: "9005538", lat: 36.268803, lng: 127.47771 }, { name: "남대전종합물류단지", sid: "13780", lat: 36.272915, lng: 127.47184 }, { name: "석천들마을아파트", sid: "13410", lat: 36.27638, lng: 127.467415 }, { name: "산내초등학교", sid: "13460", lat: 36.278145, lng: 127.46925 }, { name: "e편한세상아파트", sid: "13440", lat: 36.280586, lng: 127.46806 }, { name: "산내주공아파트", sid: "13390", lat: 36.28429, lng: 127.466095 }, { name: "오투그란데아파트", sid: "13690", lat: 36.28764, lng: 127.464714 }, { name: "운전면허시험장", sid: "13670", lat: 36.290543, lng: 127.46309 }, { name: "대성동", sid: "13650", lat: 36.294106, lng: 127.461685 }, { name: "대성삼거리", sid: "13600", lat: 36.2963, lng: 127.45936 }, { name: "옥계동", sid: "20980", lat: 36.29909, lng: 127.454544 }, { name: "은혜아파트", sid: "20960", lat: 36.301216, lng: 127.452736 }, { name: "호동", sid: "20940", lat: 36.303894, lng: 127.45041 }, { name: "석교치안센터", sid: "20920", lat: 36.307575, lng: 127.44639 }, { name: "석교동행정복지센터", sid: "20900", lat: 36.309025, lng: 127.443535 }, { name: "동명중학교", sid: "20870", lat: 36.311237, lng: 127.43911 }, { name: "부사오거리", sid: "21120", lat: 36.31405, lng: 127.43449 }, { name: "한밭종합운동장", sid: "21100", lat: 36.317005, lng: 127.432846 }, { name: "오토바이거리", sid: "20800", lat: 36.321606, lng: 127.43011 }, { name: "대흥동네거리", sid: "20750", lat: 36.323833, lng: 127.426285 }, { name: "대고오거리", sid: "20620", lat: 36.323128, lng: 127.42219 }, { name: "성모병원", sid: "20570", lat: 36.323917, lng: 127.41935 }, { name: "대전충남병무청", sid: "21240", lat: 36.322998, lng: 127.41465 }, { name: "서대전네거리역3번출구", sid: "21410", lat: 36.322006, lng: 127.4105 }, { name: "문화동삼익아파트", sid: "22020", lat: 36.318707, lng: 127.406296 }, { name: "센트럴파크1단지", sid: "22070", lat: 36.316402, lng: 127.40724 }, { name: "동산중고등학교", sid: "21990", lat: 36.31461, lng: 127.40472 }, { name: "문화초등학교", sid: "21830", lat: 36.31273, lng: 127.398796 }, { name: "산성우성아파트", sid: "21730", lat: 36.311466, lng: 127.39393 }, { name: "문성초등학교입구", sid: "22390", lat: 36.310802, lng: 127.39131 }, { name: "머티네거리", sid: "22320", lat: 36.309193, lng: 127.38768 }, { name: "산성동행정복지센터", sid: "22300", lat: 36.30615, lng: 127.38652 }, { name: "산성네거리", sid: "22280", lat: 36.303757, lng: 127.386055 }, { name: "산성초등학교", sid: "22570", lat: 36.300503, lng: 127.3855 }, { name: "사정동", sid: "22550", lat: 36.29794, lng: 127.38467 }, { name: "우남스타원아파트", sid: "22500", lat: 36.29316, lng: 127.38268 }, { name: "농산물유통센터", sid: "22460", lat: 36.28877, lng: 127.38014 }, { name: "안영생활체육단지", sid: "22680", lat: 36.28519, lng: 127.376335 }, { name: "한빛고교", sid: "22670", lat: 36.28324, lng: 127.37591 }, { name: "안영동검바위마을", sid: "22710", lat: 36.273804, lng: 127.37731 }
+                ],
+                down: [
+                    { name: "안영동검바위마을", sid: "9002174", lat: 36.275196, lng: 127.37695 }, { name: "한빛고교", sid: "22660", lat: 36.28315, lng: 127.37609 }, { name: "안영생활체육단지", sid: "22690", lat: 36.285152, lng: 127.37655 }, { name: "농산물유통센터", sid: "22470", lat: 36.28847, lng: 127.380196 }, { name: "우남스타원아파트", sid: "22520", lat: 36.293278, lng: 127.383125 }, { name: "사정동", sid: "22560", lat: 36.297787, lng: 127.38488 }, { name: "산성초등학교", sid: "22580", lat: 36.300632, lng: 127.385826 }, { name: "산성네거리", sid: "22290", lat: 36.30329, lng: 127.386314 }, { name: "산성시장", sid: "22310", lat: 36.306076, lng: 127.38686 }, { name: "문성초등학교입구", sid: "22380", lat: 36.3103, lng: 127.390205 }, { name: "산성우성아파트", sid: "22430", lat: 36.311142, lng: 127.3937 }, { name: "문화초등학교", sid: "21870", lat: 36.312126, lng: 127.39726 }, { name: "문화육교", sid: "21900", lat: 36.312916, lng: 127.4001 }, { name: "동산중고등학교", sid: "22000", lat: 36.314426, lng: 127.40493 }, { name: "센트럴파크1단지", sid: "22080", lat: 36.3169, lng: 127.407295 }, { name: "서대전역네거리", sid: "22040", lat: 36.32112, lng: 127.40834 }, { name: "대전충남병무청", sid: "22250", lat: 36.322647, lng: 127.41511 }, { name: "성모병원", sid: "20550", lat: 36.323353, lng: 127.41863 }, { name: "성모오거리", sid: "20610", lat: 36.32343, lng: 127.421 }, { name: "대전고등학교", sid: "20700", lat: 36.322884, lng: 127.42433 }, { name: "대흥동네거리", sid: "20770", lat: 36.32383, lng: 127.42715 }, { name: "오토바이거리", sid: "20790", lat: 36.322025, lng: 127.42954 }, { name: "한밭종합운동장", sid: "21090", lat: 36.31635, lng: 127.43282 }, { name: "부사오거리", sid: "21130", lat: 36.312645, lng: 127.43552 }, { name: "동명중학교", sid: "20880", lat: 36.310787, lng: 127.43918 }, { name: "석교동행정복지센터", sid: "20890", lat: 36.309402, lng: 127.44198 }, { name: "석교치안센터", sid: "20910", lat: 36.307796, lng: 127.44515 }, { name: "호동", sid: "20930", lat: 36.3047, lng: 127.44925 }, { name: "은혜아파트", sid: "20950", lat: 36.301357, lng: 127.45215 }, { name: "옥계동", sid: "20970", lat: 36.298992, lng: 127.4542 }, { name: "옥계교", sid: "20990", lat: 36.297256, lng: 127.455696 }, { name: "대성삼거리", sid: "13610", lat: 36.29606, lng: 127.4596 }, { name: "운전면허시험장", sid: "13660", lat: 36.29111, lng: 127.46269 }, { name: "오투그란데아파트", sid: "13680", lat: 36.287144, lng: 127.464775 }, { name: "산내주공아파트", sid: "13400", lat: 36.283302, lng: 127.46642 }, { name: "e편한세상아파트", sid: "13430", lat: 36.281143, lng: 127.46756 }, { name: "산내초등학교", sid: "13450", lat: 36.278748, lng: 127.46878 }, { name: "석천들마을아파트", sid: "13420", lat: 36.276493, lng: 127.46816 }, { name: "남대전종합물류단지", sid: "13790", lat: 36.272728, lng: 127.47134 }, { name: "낭월공영차고지", sid: "13820", lat: 36.270203, lng: 127.47669 }
+                ]
+            }
+        };
+
+        /** 서버 TRACK_FOR_STATS(108·501·511·513) 와 목록 동기화 필요 */
+        const DIT_STATS_ROUTES = { "108": 1, "501": 1, "511": 1, "513": 1 };
+
+        /** ditransfer nginx → dongin-bus-admin 집계 (실패 무시). */
+        function ditSendPageStats(kind, route) {
+            try {
+                const isRoute = kind === "route";
+                let body = "kind=" + (isRoute ? "route" : "total");
+                if (isRoute) {
+                    if (route == null || !DIT_STATS_ROUTES[String(route)]) return;
+                    body += "&route=" + encodeURIComponent(String(route));
+                }
+                if (navigator.sendBeacon) {
+                    const blob = new Blob([body], { type: "application/x-www-form-urlencoded" });
+                    navigator.sendBeacon("/dit-collect/pageview", blob);
+                } else {
+                    fetch("/dit-collect/pageview", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                        body: body,
+                        keepalive: true
+                    });
+                }
+            } catch (e) { /* 무시 */ }
+        }
+
+        window.onload = () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const routeParam = urlParams.get('route');
+            if (routeParam) {
+                isCrewMode = false;
+                startApp(routeParam);
+            } else {
+                isCrewMode = true;
+                document.getElementById('crew-selection-screen').style.display = 'flex';
+            }
+            startGlobalTimer();
+            ditSendPageStats("total");
+        };
+
+        function startApp(route) {
+            if (route != null && DIT_STATS_ROUTES[String(route)]) {
+                ditSendPageStats("route", route);
+            }
+            currentRoute = route;
+            document.getElementById('crew-selection-screen').style.display = 'none';
+            document.getElementById('main-app-screen').style.display = 'block';
+            
+            document.getElementById('badge-text').innerText = isCrewMode ? `현재 ${route}번 운행 중` : `현재 ${route}번 탑승 중`;
+            if(isCrewMode) document.getElementById('crew-reset-link').style.display = 'inline';
+
+            updateRouteUI();
+            
+            // GPS 위치가 파악되기 전까지 먼저 리스트를 모두 띄워서 빈 화면 방지
+            showStops(currentDirection); 
+            initGps();
+        }
+
+        function updateRouteUI() {
+            const upBtn = document.getElementById('btn-up');
+            const downBtn = document.getElementById('btn-down');
+            if (routeSummary[currentRoute]) {
+                upBtn.innerHTML = `상행<br><span style="font-size:11px; font-weight:normal;">${routeSummary[currentRoute].up}</span>`;
+                downBtn.innerHTML = `하행<br><span style="font-size:11px; font-weight:normal;">${routeSummary[currentRoute].down}</span>`;
+            }
+        }
+
+        function initGps() {
+            if (navigator.geolocation) {
+                document.getElementById('gps-status').innerHTML = `⏳ 위치 정보 확인 중... (목록을 불러옵니다)`;
+                navigator.geolocation.getCurrentPosition((pos) => {
+                    userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    document.getElementById('gps-status').innerHTML = `📍 위치 확인 완료! (가까운 10개 정류장 표시)`;
+                    showStops(currentDirection); 
+                }, () => {
+                    document.getElementById('gps-status').innerHTML = `⚠️ 위치 권한이 없어 전체 노선을 표시합니다.`;
+                }, { timeout: 7000, maximumAge: 0 });
+            } else {
+                document.getElementById('gps-status').innerHTML = `⚠️ GPS 미지원 기기입니다. 전체 노선을 표시합니다.`;
+            }
+        }
+
+        function setDirection(dir) {
+            currentDirection = dir;
+            document.getElementById('btn-up').classList.toggle('btn-active', dir === 'up');
+            document.getElementById('btn-down').classList.toggle('btn-active', dir === 'down');
+            showStops(dir);
+        }
+
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        function showStops(direction) {
+            const listContainer = document.getElementById('stop-list-container');
+            listContainer.innerHTML = '';
+            let stops = allBusData[currentRoute][direction] || [];
+            
+            if (userLocation && stops.length > 0) {
+                let minIdx = 0, minD = Infinity;
+                stops.forEach((s, i) => {
+                    let d = getDistance(userLocation.lat, userLocation.lng, s.lat, s.lng);
+                    if (d < minD) { minD = d; minIdx = i; }
+                });
+                stops = stops.slice(minIdx, minIdx + 10);
+            }
+
+            stops.forEach(stop => {
+                const li = document.createElement('li');
+                li.className = 'stop-item';
+                li.innerHTML = `
+                    <div class="stop-header" id="header-${stop.sid}" data-sid="${stop.sid}" data-name="${stop.name}" onclick="toggleTransfer(this)">
+                        <span>📍 ${stop.name}</span><span class="transfer-btn">환승보기 🔄</span>
+                    </div>
+                    <div class="transfer-box" id="box-${stop.sid}"></div>
+                `;
+                listContainer.appendChild(li);
+            });
+
+            if (userLocation) {
+                const btnLi = document.createElement('li');
+                btnLi.style.listStyle = 'none';
+                btnLi.innerHTML = `<button class="all-view-btn" onclick="resetGps()">전체 노선 보기</button>`;
+                listContainer.appendChild(btnLi);
+            }
+        }
+
+        function resetGps() {
+            userLocation = null;
+            document.getElementById('gps-status').style.display = 'none';
+            showStops(currentDirection);
+        }
+
+        function formatTime(totalSec) {
+            if (totalSec <= 0) return "곧 도착";
+            let m = Math.floor(totalSec / 60);
+            let s = totalSec % 60;
+            return (m > 0 ? `${m}분 ` : "") + `${s}초`;
+        }
+
+        function formatPos(posStr) {
+            if (!posStr) return "";
+            let clean = posStr.trim().replace("전", "");
+            return isNaN(clean) ? posStr : `${clean}개 전`;
+        }
+
+        // 🚨 정렬 기준 변경 함수
+        window.changeSort = function(sid, type) {
+            window.currentSort = type;
+            const box = document.getElementById(`box-${sid}`);
+            const header = document.getElementById(`header-${sid}`);
+            if (box && header) renderTransferBox(sid, box, header.dataset.name);
+        };
+
+        // 🚨 저장된 캐시 데이터로 화면을 그리는 렌더링 함수
+        function renderTransferBox(sid, box, stopName) {
+            let groups = window.transferCache[sid];
+            if (!groups) return;
+
+            let routes = Object.keys(groups).map(rNo => {
+                return { rNo: rNo, dest: groups[rNo].dest, arrs: groups[rNo].arrs };
+            });
+
+            // 선택한 정렬 방식에 따라 리스트 정렬
+            if (window.currentSort === 'time') {
+                routes.sort((a, b) => a.arrs[0].totalSec - b.arrs[0].totalSec);
+            } else {
+                routes.sort((a, b) => parseInt(a.rNo.replace(/[^0-9]/g, '')) - parseInt(b.rNo.replace(/[^0-9]/g, '')));
+            }
+
+            let html = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <b><span style="color:#00529b;">${stopName}</span> 환승 정보</b>
+                    <div style="font-size:12px; display:flex; gap: 8px;">
+                        <label style="cursor:pointer;"><input type="radio" name="sort_${sid}" value="route" ${window.currentSort==='route'?'checked':''} onchange="changeSort('${sid}', 'route')"> 번호순</label>
+                        <label style="cursor:pointer;"><input type="radio" name="sort_${sid}" value="time" ${window.currentSort==='time'?'checked':''} onchange="changeSort('${sid}', 'time')"> 시간순</label>
+                    </div>
+                </div>
+                <hr style="border:0.5px solid #ccc; margin-bottom:10px;">
+            `;
+
+            if (routes.length === 0) {
+                box.innerHTML = html + "환승 가능한 다른 노선 정보가 없습니다.";
+                return;
+            }
+
+            routes.forEach(r => {
+                let displaySec1 = r.arrs[0].totalSec;
+                let timeStr1 = `<span class="live-sec" data-totalsec="${displaySec1}">${formatTime(displaySec1)}</span>`;
+                let info = `<b style="color: #d32f2f; font-size:16px;">${timeStr1} <span style="font-size:14px; font-weight:normal;">(${formatPos(r.arrs[0].pos)})</span></b>`;
+                
+                // 2번째 버스 렌더링
+                if (r.arrs[1]) {
+                    let displaySec2 = r.arrs[1].totalSec;
+                    let timeStr2 = `<span class="live-sec" data-totalsec="${displaySec2}">${formatTime(displaySec2)}</span>`;
+                    info += `<br><span style="color:#666; font-size:14px; display:inline-block; margin-top:4px;">${timeStr2} (${formatPos(r.arrs[1].pos)})</span>`;
+                }
+                
+                html += `
+                    <div class="arrival-item">
+                        <span class="route-badge">${r.rNo}번</span> <small>(${r.dest}행)</small><br>
+                        <div style="margin-top:5px;">${info}</div>
+                    </div>`;
+            });
+            box.innerHTML = html;
+        }
+
+        // 글로벌 카운트다운 타이머 (앱 내의 캐시 시간도 함께 줄임)
+        function startGlobalTimer() {
+            setInterval(() => {
+                // 백그라운드 데이터의 시간 차감 (정렬 변경 시 시간이 튀는 것 방지)
+                for (let sid in window.transferCache) {
+                    for (let rNo in window.transferCache[sid]) {
+                        window.transferCache[sid][rNo].arrs.forEach(arr => {
+                            if (arr.totalSec > 0) arr.totalSec--;
+                        });
+                    }
+                }
+
+                // 눈에 보이는 화면 시간 차감
+                document.querySelectorAll('.live-sec').forEach(el => {
+                    let s = parseInt(el.dataset.totalsec);
+                    if (s > 0) {
+                        s--;
+                        el.dataset.totalsec = s;
+                        el.innerText = formatTime(s);
+                    } else {
+                        el.innerText = "곧 도착";
+                    }
+                });
+            }, 1000);
+        }
+
+        async function toggleTransfer(element, isRefresh = false) {
+            const sid = element.dataset.sid;
+            const stopName = element.dataset.name;
+            const box = element.nextElementSibling;
+            
+            if (!isRefresh && box.style.display === 'block') { box.style.display = 'none'; return; }
+            
+            document.querySelectorAll('.transfer-box').forEach(b => {
+                if (b !== box) b.style.display = 'none';
+            });
+
+            box.style.display = 'block';
+            if (!isRefresh) box.innerHTML = `⏳ 실시간 정보를 불러오는 중...`;
+
+            try {
+                const q = new URLSearchParams({ serviceKey: "dd4c0534cd503e57a9e382fd2c23f911f31eb3652025e3819236420d64449c0d", arsId: String(sid) });
+                const res = await fetch(`/api/getArrInfoByUid?${q}`);
+                if (!res.ok) throw new Error(`서버 응답 오류`);
+
+                const text = await res.text();
+                const xml = new DOMParser().parseFromString(text, "text/xml");
+                const mh = xml.querySelector("msgHeader");
+                const headerCd = mh?.querySelector("headerCd")?.textContent?.trim();
+                
+                if (headerCd !== undefined && headerCd !== "" && headerCd !== "0") {
+                    box.innerHTML = `<div style="color:#d32f2f; font-size:12px;">⚠️ OPEN API 오류 (${headerCd})</div>`;
+                    return;
+                }
+
+                const items = xml.querySelectorAll("itemList");
+                if (items.length === 0) {
+                    box.innerHTML = "❌ 도착 예정인 버스가 없습니다.";
+                    return;
+                }
+                
+                // 🚨 2대 파싱 완벽 적용
+                const groups = {};
+                items.forEach(item => {
+                    const rNo = item.querySelector("ROUTE_NO").textContent;
+                    if (!groups[rNo]) {
+                        groups[rNo] = { dest: item.querySelector("DESTINATION")?.textContent || "종점", arrs: [] };
+                    }
+
+                    const parseBus = (minTag, secTag, posTag) => {
+                        let secVal = item.querySelector(secTag)?.textContent;
+                        let minVal = item.querySelector(minTag)?.textContent;
+                        let posVal = item.querySelector(posTag)?.textContent;
+                        
+                        let totalSec = null;
+                        if (secVal && secVal.trim() !== "") {
+                            totalSec = parseInt(secVal.trim(), 10);
+                        } else if (minVal && minVal.trim() !== "") {
+                            totalSec = parseInt(minVal.trim(), 10) * 60;
+                        }
+
+                        if (totalSec !== null) {
+                            // 완전히 똑같은 정보가 중복으로 들어가는 것을 방지
+                            if (!groups[rNo].arrs.find(a => a.totalSec === totalSec && a.pos === posVal)) {
+                                groups[rNo].arrs.push({ totalSec: totalSec, pos: posVal });
+                            }
+                        }
+                    };
+
+                    // API가 제공하는 첫 번째, 두 번째 버스 태그 모두 수집
+                    parseBus("EXTIME_MIN", "EXTIME_SEC", "STATUS_POS");
+                    parseBus("EXTIME_MIN2", "EXTIME_SEC2", "STATUS_POS2");
+                });
+
+                // 수집된 버스를 시간순으로 정렬하고 각 노선당 최대 2대까지만 자름
+                Object.keys(groups).forEach(rNo => {
+                    groups[rNo].arrs.sort((a, b) => a.totalSec - b.totalSec);
+                    groups[rNo].arrs = groups[rNo].arrs.slice(0, 2);
+                    
+                    // 🚨 시간 역행(튕김) 방지 로직
+                    if (isRefresh && window.transferCache[sid]) {
+                        if (window.transferCache[sid][rNo]) {
+                            let oldBus1 = window.transferCache[sid][rNo].arrs[0];
+                            let newBus1 = groups[rNo].arrs[0];
+                            if (oldBus1 && newBus1) {
+                                if (newBus1.totalSec > oldBus1.totalSec && (newBus1.totalSec - oldBus1.totalSec) < 45) {
+                                    newBus1.totalSec = oldBus1.totalSec;
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // 캐시에 저장 후 화면 렌더링 호출
+                window.transferCache[sid] = groups;
+                renderTransferBox(sid, box, stopName);
+
+            } catch (e) {
+                console.error("에러 상세:", e);
+                box.innerHTML = `<div style="color:#d32f2f; font-size:12px;">⚠️ 정보 조회 실패 (네트워크 확인)</div>`;
+            }
+        }
+
+        // 플로팅 새로고침 버튼 
+        function forceRefresh() {
+            let t = document.getElementById("toast");
+            t.innerText = "위치 갱신 중...";
+            t.className = "show";
+
+            let openStopNames = [];
+            document.querySelectorAll('.transfer-box').forEach(box => {
+                if (box.style.display === 'block') {
+                    openStopNames.push(box.previousElementSibling.dataset.name);
+                }
+            });
+
+            if (navigator.geolocation && userLocation !== null) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                        showStops(currentDirection); 
+                        
+                        openStopNames.forEach(name => {
+                            let header = document.querySelector(`.stop-header[data-name="${name}"]`);
+                            if(header) toggleTransfer(header, true);
+                        });
+
+                        t.innerText = "위치 및 목록 갱신 완료!";
+                        setTimeout(() => t.className = "", 2000);
+                    }, 
+                    () => {
+                        openStopNames.forEach(name => {
+                            let header = document.querySelector(`.stop-header[data-name="${name}"]`);
+                            if(header) toggleTransfer(header, true);
+                        });
+                        t.innerText = "새로고침 완료 (위치 갱신 실패)";
+                        setTimeout(() => t.className = "", 2000);
+                    }, 
+                    { timeout: 7000, maximumAge: 0 }
+                );
+            } else {
+                openStopNames.forEach(name => {
+                    let header = document.querySelector(`.stop-header[data-name="${name}"]`);
+                    if(header) toggleTransfer(header, true);
+                });
+                t.innerText = "새로고침 완료";
+                setTimeout(() => t.className = "", 2000);
+            }
+        }
+    </script>
+</body>
+</html>

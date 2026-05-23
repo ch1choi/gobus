@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ditransfer 관리 — index.html</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 24px auto; padding: 0 16px; line-height: 1.45; }
+    h1 { font-size: 1.25rem; }
+    label { display: block; margin-top: 12px; font-weight: 600; }
+    input[type=text], input[type=password], select { width: 100%; box-sizing: border-box; padding: 8px; margin-top: 4px; font-size: 15px; }
+    button { margin-top: 12px; margin-right: 8px; padding: 10px 16px; cursor: pointer; font-size: 15px; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .panel { border: 1px solid #ccc; border-radius: 8px; padding: 16px; margin-top: 16px; }
+    .msg { margin-top: 12px; font-size: 14px; }
+    .err { color: #c62828; }
+    .ok { color: #2e7d32; }
+    #status { font-size: 13px; color: #555; margin-top: 8px; white-space: pre-wrap; word-break: break-all; }
+    .actions { margin-top: 8px; }
+    hr { margin: 20px 0; border: none; border-top: 1px solid #ddd; }
+    .hint { font-size: 13px; color: #666; margin-top: 6px; }
+    .backup-fieldset { border: none; padding: 0; margin: 0; min-width: 0; }
+    .backup-list { max-height: 260px; overflow-y: auto; margin-top: 10px; padding: 8px; border: 1px solid #e0e0e0; border-radius: 6px; background: #fafafa; }
+    .backup-list label { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; font-weight: normal; cursor: pointer; word-break: break-all; }
+    .backup-list label:first-child { margin-top: 0; }
+    .backup-list input[type=checkbox] { margin-top: 3px; flex-shrink: 0; }
+    #visit-stats-panel { overflow-x: auto; }
+    /* 통계 표: 기본은 약 5일 분량 높이, 나머지는 세로 스크롤 */
+    .visit-stats-table-wrap {
+      margin-top: 10px;
+      max-height: calc(2.45rem * 5 + 2.6rem);
+      overflow-y: auto;
+      overflow-x: auto;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      background: #fff;
+    }
+    .visit-stats-table-wrap.visit-stats-table-wrap--expanded {
+      max-height: none;
+      overflow-y: visible;
+    }
+    #visit-stats-panel .stats-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 0; }
+    #visit-stats-panel .stats-table th, #visit-stats-panel .stats-table td { border: 1px solid #ccc; padding: 6px 8px; text-align: right; }
+    #visit-stats-panel .stats-table th:first-child, #visit-stats-panel .stats-table td:first-child { text-align: left; }
+    #visit-stats-panel .stats-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #f0f4f8;
+      box-shadow: 0 1px 0 #ccc;
+    }
+    .visit-stats-expand-details { margin-top: 10px; }
+    .visit-stats-expand-details summary {
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: #1565c0;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>dongin_bus — index.html 관리</h1>
+  <p class="hint">노선·정류장 데이터는 <strong>index.html</strong> 한 파일에서 관리합니다.</p>
+
+  <div id="login-panel" class="panel">
+    <label>아이디</label>
+    <input type="text" id="username" autocomplete="username">
+    <label>비밀번호</label>
+    <input type="password" id="password" autocomplete="current-password">
+    <button type="button" id="btn-login">로그인</button>
+    <div id="login-msg" class="msg"></div>
+  </div>
+
+  <div id="main-panel" class="panel" style="display:none;">
+    <p id="status"></p>
+
+    <div id="visit-stats-panel">
+      <h2 style="font-size:1.05rem; margin-bottom: 6px;">ditransfer 페이지 호출 (KST 일별)</h2>
+      <p class="hint">총 호출은 HTML 로드마다 +1입니다. 노선 열은 메인 화면에 노선이 정해졌을 때(<code>?route=</code> 또는 승무원 노선 선택) +1입니다. <strong>표는 기본 약 5일치만 보이고,</strong> 더 과거 날짜는 안쪽 스크롤로 볼 수 있습니다.</p>
+      <p id="visit-stats-note" class="hint" style="margin-top:4px;"></p>
+      <div id="visit-stats-empty" class="hint" style="margin-top: 8px;">통계 불러오는 중…</div>
+      <div id="visit-stats-table-wrap" class="visit-stats-table-wrap" style="display: none;" aria-label="일별 통계 표 영역">
+        <table id="visit-stats-table" class="stats-table" style="display:none;" aria-describedby="visit-stats-caption">
+          <caption id="visit-stats-caption" style="caption-side:top; text-align:left; padding: 8px 8px 6px; font-weight:600; background:#f9f9f9;">최근 30일</caption>
+        </table>
+      </div>
+      <details id="visit-stats-expand-details" class="visit-stats-expand-details" style="display: none;">
+        <summary>표 전체를 펼쳐 보기 (높이 제한 해제)</summary>
+        <p class="hint" style="margin-top: 6px;">접으면 다시 약 5일 높이로 줄이고 나머지는 표 안에서 스크롤합니다.</p>
+      </details>
+    </div>
+
+    <hr>
+
+    <label for="file">index.html 업로드</label>
+    <input type="file" id="file" accept=".html,text/html">
+    <div class="actions">
+      <button type="button" id="btn-upload">업로드 및 적용</button>
+    </div>
+    <p class="hint">적용 전 현재 파일은 자동으로 백업됩니다.</p>
+
+    <hr>
+
+    <label for="btn-download">현재 파일 받기</label>
+    <div class="actions">
+      <button type="button" id="btn-download">index.html 다운로드</button>
+    </div>
+    <p class="hint">서버에 올라간 내용을 로컬에서 수정한 뒤 다시 업로드할 수 있습니다.</p>
+
+    <hr>
+
+    <label for="rollback-select">백업으로 롤백</label>
+    <select id="rollback-select" aria-label="복원할 백업 파일"></select>
+    <div class="actions">
+      <button type="button" id="btn-rollback">선택한 백업으로 롤백</button>
+    </div>
+    <p class="hint">롤백 전 현재 index.html 은 또 다른 백업으로 저장됩니다.</p>
+
+    <hr>
+
+    <fieldset id="backup-delete-fieldset" class="backup-fieldset">
+      <legend style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">백업 파일 삭제</legend>
+      <p class="hint">체크한 백업만 서버 디스크에서 삭제합니다. <strong>현재 index.html</strong> 은 삭제되지 않으며, 삭제 후 복구할 수 없습니다.</p>
+      <div class="actions">
+        <button type="button" id="btn-backup-select-all">전체 선택</button>
+        <button type="button" id="btn-backup-select-none">선택 해제</button>
+        <button type="button" id="btn-delete-selected-backups">선택 항목 삭제</button>
+      </div>
+      <div id="backup-checkboxes" class="backup-list" role="group" aria-label="삭제할 백업 파일"></div>
+    </fieldset>
+
+    <hr>
+
+    <div id="cctv-panel" class="panel" style="display:none;">
+      <h2 style="font-size:1.1rem; margin-top:0;">CCTV 뷰어 소스 (<code>cctv_viewer/</code>)</h2>
+      <p class="hint">nginx 정적 경로와 동일한 디렉터리입니다. <strong>index.html</strong>, <strong>data/routes.json</strong>을 각각 관리합니다.</p>
+      <p id="cctv-disabled-msg" class="msg err" style="display:none;"></p>
+      <div id="cctv-active" style="display:none;">
+        <p id="cctv-status-text" style="font-size: 13px; color: #555; white-space: pre-wrap; word-break: break-all;"></p>
+
+        <h3 style="font-size:1rem; margin-top:16px;">index.html</h3>
+        <label for="file-cctv-index">파일 선택</label>
+        <input type="file" id="file-cctv-index" accept=".html,text/html">
+        <div class="actions">
+          <button type="button" id="btn-upload-cctv-index">업로드</button>
+          <button type="button" id="btn-download-cctv-index">다운로드</button>
+        </div>
+        <label for="rollback-cctv-index">백업으로 롤백</label>
+        <select id="rollback-cctv-index" aria-label="index.html 백업"></select>
+        <div class="actions">
+          <button type="button" id="btn-rollback-cctv-index">선택 백업으로 롤백</button>
+        </div>
+        <fieldset class="backup-fieldset" id="fieldset-cctv-index">
+          <legend style="font-weight:600;">index.html 백업 삭제</legend>
+          <div class="actions">
+            <button type="button" id="btn-cctv-index-select-all">전체 선택</button>
+            <button type="button" id="btn-cctv-index-select-none">선택 해제</button>
+            <button type="button" id="btn-delete-cctv-index">선택 항목 삭제</button>
+          </div>
+          <div id="backup-cctv-index" class="backup-list" role="group"></div>
+        </fieldset>
+
+        <hr>
+
+        <h3 style="font-size:1rem; margin-top:16px;">data/routes.json</h3>
+        <label for="file-cctv-routes">파일 선택</label>
+        <input type="file" id="file-cctv-routes" accept=".json,application/json">
+        <div class="actions">
+          <button type="button" id="btn-upload-cctv-routes">업로드</button>
+          <button type="button" id="btn-download-cctv-routes">다운로드</button>
+        </div>
+        <label for="rollback-cctv-routes">백업으로 롤백</label>
+        <select id="rollback-cctv-routes" aria-label="routes.json 백업"></select>
+        <div class="actions">
+          <button type="button" id="btn-rollback-cctv-routes">선택 백업으로 롤백</button>
+        </div>
+        <fieldset class="backup-fieldset" id="fieldset-cctv-routes">
+          <legend style="font-weight:600;">routes.json 백업 삭제</legend>
+          <div class="actions">
+            <button type="button" id="btn-cctv-routes-select-all">전체 선택</button>
+            <button type="button" id="btn-cctv-routes-select-none">선택 해제</button>
+            <button type="button" id="btn-delete-cctv-routes">선택 항목 삭제</button>
+          </div>
+          <div id="backup-cctv-routes" class="backup-list" role="group"></div>
+        </fieldset>
+      </div>
+    </div>
+
+    <hr>
+
+    <button type="button" id="btn-logout">로그아웃</button>
+
+    <div id="main-msg" class="msg"></div>
+  </div>
+
+  <script>
+    function formatBackupTime(ms) {
+      try {
+        return new Date(ms).toLocaleString('ko-KR');
+      } catch (_) {
+        return '';
+      }
+    }
+
+    /** 현재 페이지 기준으로 api 경로 조합(전용 도메인·ADMIN_BASE_PATH 변경 시에도 동작). */
+    function apiUrl(rel) {
+      let path = window.location.pathname.replace(/\/+$/, '');
+      if (path === '') path = '/';
+      const base = path.endsWith('/') ? window.location.origin + path : window.location.origin + path + '/';
+      return new URL(rel.replace(/^\//, ''), base).href;
+    }
+
+    async function api(path, opts) {
+      const r = await fetch(path, Object.assign({ credentials: 'same-origin' }, opts || {}));
+      const text = await r.text();
+      let data;
+      try { data = JSON.parse(text); } catch (_) { data = { raw: text }; }
+      if (!r.ok) throw new Error(data.error || data.raw || r.status);
+      return data;
+    }
+
+    function setBusy(busy) {
+      ['btn-upload', 'btn-download', 'btn-rollback', 'btn-backup-select-all', 'btn-backup-select-none', 'btn-delete-selected-backups', 'btn-logout',
+        'btn-upload-cctv-index', 'btn-download-cctv-index', 'btn-rollback-cctv-index', 'btn-cctv-index-select-all', 'btn-cctv-index-select-none', 'btn-delete-cctv-index',
+        'btn-upload-cctv-routes', 'btn-download-cctv-routes', 'btn-rollback-cctv-routes', 'btn-cctv-routes-select-all', 'btn-cctv-routes-select-none', 'btn-delete-cctv-routes'
+      ].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !!busy;
+      });
+      const fs = document.getElementById('backup-delete-fieldset');
+      if (!fs) return;
+      if (busy) {
+        fs.disabled = true;
+      } else {
+        fs.disabled = !document.querySelector('#backup-checkboxes input[type="checkbox"]');
+      }
+    }
+
+    function renderVisitStats(data) {
+      const emptyEl = document.getElementById('visit-stats-empty');
+      const wrap = document.getElementById('visit-stats-table-wrap');
+      const tbl = document.getElementById('visit-stats-table');
+      const detailsEl = document.getElementById('visit-stats-expand-details');
+      const note = document.getElementById('visit-stats-note');
+      note.textContent = '';
+      tbl.style.display = 'none';
+      if (wrap) {
+        wrap.style.display = 'none';
+        wrap.classList.remove('visit-stats-table-wrap--expanded');
+      }
+      if (detailsEl) {
+        detailsEl.style.display = 'none';
+        detailsEl.open = false;
+      }
+      emptyEl.style.display = 'block';
+      if (!data || !data.series || data.series.length === 0) {
+        emptyEl.textContent = data && data.dbUnreachable ? '통계 DB 를 열 수 없습니다. 서버 로그 확인.' : '(데이터 없음)';
+        return;
+      }
+      const routes = Array.isArray(data.routes) ? data.routes : [];
+      emptyEl.style.display = 'none';
+      if (wrap) wrap.style.display = 'block';
+      tbl.style.display = 'table';
+
+      let noteParts = [];
+      if (data.dbDisabled) noteParts.push('서버에서 페이지 통계가 비활성화되어 있습니다(VISIT_TRACKING_ENABLED=0).');
+      if (data.dbUnreachable) noteParts.push('통계 파일을 생성·열 수 없었습니다.');
+      note.textContent = noteParts.join(' ');
+
+      const daysLabel = data.days != null ? String(data.days) : '';
+      const capText =
+        (daysLabel ? '최근 ' + daysLabel + '일' : '일별 통계') + ' — 최신일이 위, 안쪽 스크롤로 이전 날짜';
+
+      const theadRow = '<th scope="col">날짜</th>' +
+        '<th scope="col">총 호출</th>' +
+        routes.map(function (rid) {
+          return '<th scope="col">' + rid + '번</th>';
+        }).join('');
+
+      const bodyRows = data.series.map(function (row) {
+        const cells =
+          '<th scope="row">' + row.date + '</th>' +
+          '<td>' + row.total + '</td>' +
+          routes.map(function (rid) {
+            const br = row.byRoute || {};
+            return '<td>' + (br[rid] != null ? br[rid] : 0) + '</td>';
+          }).join('');
+        return '<tr>' + cells + '</tr>';
+      }).join('');
+
+      tbl.innerHTML =
+        '<caption id="visit-stats-caption" style="caption-side:top;text-align:left;padding:8px 8px 6px;font-weight:600;background:#f9f9f9;">' +
+        capText +
+        '</caption><thead><tr>' + theadRow + '</tr></thead><tbody>' + bodyRows + '</tbody>';
+
+      if (detailsEl && data.series.length > 5) {
+        detailsEl.style.display = 'block';
+      }
+    }
+
+    function renderBackupCheckboxes(backups) {
+      const root = document.getElementById('backup-checkboxes');
+      const fieldset = document.getElementById('backup-delete-fieldset');
+      root.innerHTML = '';
+      if (!backups.length) {
+        fieldset.disabled = true;
+        document.getElementById('btn-backup-select-all').disabled = true;
+        document.getElementById('btn-backup-select-none').disabled = true;
+        document.getElementById('btn-delete-selected-backups').disabled = true;
+        return;
+      }
+      fieldset.disabled = false;
+      document.getElementById('btn-backup-select-all').disabled = false;
+      document.getElementById('btn-backup-select-none').disabled = false;
+      document.getElementById('btn-delete-selected-backups').disabled = false;
+      backups.forEach(function (b) {
+        const lab = document.createElement('label');
+        const inp = document.createElement('input');
+        inp.type = 'checkbox';
+        inp.value = b.name;
+        const span = document.createElement('span');
+        span.textContent = b.name + (b.mtimeMs ? ' — ' + formatBackupTime(b.mtimeMs) : '');
+        lab.appendChild(inp);
+        lab.appendChild(span);
+        root.appendChild(lab);
+      });
+    }
+
+    function renderCctvBackupList(rootId, backups) {
+      const root = document.getElementById(rootId);
+      root.innerHTML = '';
+      (backups || []).forEach(function (b) {
+        const lab = document.createElement('label');
+        const inp = document.createElement('input');
+        inp.type = 'checkbox';
+        inp.value = b.name;
+        const span = document.createElement('span');
+        span.textContent = b.name + (b.mtimeMs ? ' — ' + formatBackupTime(b.mtimeMs) : '');
+        lab.appendChild(inp);
+        lab.appendChild(span);
+        root.appendChild(lab);
+      });
+    }
+
+    function renderCctvPanel(cv) {
+      const dis = document.getElementById('cctv-disabled-msg');
+      const act = document.getElementById('cctv-active');
+      const st = document.getElementById('cctv-status-text');
+      if (!cv || cv.enabled === false) {
+        dis.style.display = 'block';
+        dis.textContent = (cv && cv.message) ? cv.message : 'CCTV 관리가 비활성화되어 있습니다.';
+        act.style.display = 'none';
+        return;
+      }
+      dis.style.display = 'none';
+      act.style.display = 'block';
+      st.textContent =
+        '경로: ' + cv.cctvViewerDir +
+        '\nindex.html: ' + (cv.indexExists ? '있음' : '없음') +
+        '\nroutes.json: ' + (cv.routesExists ? '있음' : '없음') +
+        '\nindex 백업: ' + (cv.backupCountIndex != null ? cv.backupCountIndex : 0) +
+        ', routes 백업: ' + (cv.backupCountRoutes != null ? cv.backupCountRoutes : 0);
+
+      const selI = document.getElementById('rollback-cctv-index');
+      selI.innerHTML = '';
+      const bi = Array.isArray(cv.backupsIndex) ? cv.backupsIndex : [];
+      if (!bi.length) {
+        const o = document.createElement('option');
+        o.value = '';
+        o.textContent = '(백업 없음)';
+        selI.appendChild(o);
+        selI.disabled = true;
+        document.getElementById('btn-rollback-cctv-index').disabled = true;
+      } else {
+        selI.disabled = false;
+        document.getElementById('btn-rollback-cctv-index').disabled = false;
+        bi.forEach(function (b, i) {
+          const o = document.createElement('option');
+          o.value = b.name;
+          o.textContent = b.name + (b.mtimeMs ? ' — ' + formatBackupTime(b.mtimeMs) : '');
+          if (i === 0) o.selected = true;
+          selI.appendChild(o);
+        });
+      }
+      renderCctvBackupList('backup-cctv-index', bi);
+
+      const selR = document.getElementById('rollback-cctv-routes');
+      selR.innerHTML = '';
+      const br = Array.isArray(cv.backupsRoutes) ? cv.backupsRoutes : [];
+      if (!br.length) {
+        const o = document.createElement('option');
+        o.value = '';
+        o.textContent = '(백업 없음)';
+        selR.appendChild(o);
+        selR.disabled = true;
+        document.getElementById('btn-rollback-cctv-routes').disabled = true;
+      } else {
+        selR.disabled = false;
+        document.getElementById('btn-rollback-cctv-routes').disabled = false;
+        br.forEach(function (b, i) {
+          const o = document.createElement('option');
+          o.value = b.name;
+          o.textContent = b.name + (b.mtimeMs ? ' — ' + formatBackupTime(b.mtimeMs) : '');
+          if (i === 0) o.selected = true;
+          selR.appendChild(o);
+        });
+      }
+      renderCctvBackupList('backup-cctv-routes', br);
+    }
+
+    document.getElementById('btn-login').onclick = async function () {
+      const msg = document.getElementById('login-msg');
+      msg.textContent = '';
+      msg.className = 'msg';
+      try {
+        await api(apiUrl('api/login'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        document.getElementById('login-panel').style.display = 'none';
+        document.getElementById('main-panel').style.display = 'block';
+        document.getElementById('cctv-panel').style.display = 'block';
+        refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      }
+    };
+
+    async function refreshStatus() {
+      const statusEl = document.getElementById('status');
+      const sel = document.getElementById('rollback-select');
+      try {
+        const s = await api(apiUrl('api/status'));
+        statusEl.textContent =
+          '대상 디렉터리: ' +
+          s.donginBusDir +
+          '\n현재 index.html: ' +
+          (s.indexExists ? '있음' : '없음') +
+          '\n백업 개수: ' +
+          s.backupCount +
+          (s.latestBackup ? '\n가장 최근 백업: ' + s.latestBackup : '');
+
+        renderCctvPanel(s.cctv);
+
+        sel.innerHTML = '';
+        const backups = Array.isArray(s.backups) ? s.backups : [];
+        if (!backups.length) {
+          const o = document.createElement('option');
+          o.value = '';
+          o.textContent = '(백업 없음)';
+          sel.appendChild(o);
+          sel.disabled = true;
+          document.getElementById('btn-rollback').disabled = true;
+          renderBackupCheckboxes([]);
+        } else {
+          sel.disabled = false;
+          document.getElementById('btn-rollback').disabled = false;
+          backups.forEach(function (b, i) {
+            const o = document.createElement('option');
+            o.value = b.name;
+            o.textContent = b.name + (b.mtimeMs ? ' — ' + formatBackupTime(b.mtimeMs) : '');
+            if (i === 0) o.selected = true;
+            sel.appendChild(o);
+          });
+          renderBackupCheckboxes(backups);
+        }
+
+        try {
+          const v = await api(apiUrl('api/visit-stats?days=30'));
+          renderVisitStats(v);
+        } catch (eVisit) {
+          renderVisitStats({ series: [], dbUnreachable: true });
+          const note = document.getElementById('visit-stats-note');
+          if (note) note.textContent = '통계 조회 실패: ' + String(eVisit.message || eVisit);
+        }
+      } catch (_) {
+        statusEl.textContent = '상태 조회 실패';
+        sel.innerHTML = '';
+        sel.disabled = true;
+        document.getElementById('btn-rollback').disabled = true;
+        renderBackupCheckboxes([]);
+        renderCctvPanel(null);
+        document.getElementById('visit-stats-note').textContent = '통계 포함 상태 조회에 실패했습니다.';
+        renderVisitStats({ series: [], days: 30, routes: [] });
+      }
+    }
+
+    document.getElementById('btn-backup-select-all').onclick = function () {
+      document.querySelectorAll('#backup-checkboxes input[type="checkbox"]').forEach(function (cb) {
+        cb.checked = true;
+      });
+    };
+
+    document.getElementById('btn-backup-select-none').onclick = function () {
+      document.querySelectorAll('#backup-checkboxes input[type="checkbox"]').forEach(function (cb) {
+        cb.checked = false;
+      });
+    };
+
+    document.getElementById('btn-delete-selected-backups').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      const selected = Array.prototype.map.call(
+        document.querySelectorAll('#backup-checkboxes input[type="checkbox"]:checked'),
+        function (cb) {
+          return cb.value;
+        }
+      );
+      if (!selected.length) {
+        msg.className = 'msg err';
+        msg.textContent = '삭제할 백업을 하나 이상 선택하세요.';
+        return;
+      }
+      const preview = selected.length > 12 ? selected.slice(0, 12).join('\n') + '\n… 외 ' + (selected.length - 12) + '개' : selected.join('\n');
+      if (!confirm('서버에서 다음 ' + selected.length + '개 백업 파일을 영구 삭제합니다.\n\n' + preview + '\n\n계속할까요?')) return;
+      setBusy(true);
+      try {
+        const data = await api(apiUrl('api/delete-backup'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backupNames: selected }),
+        });
+        msg.className = 'msg ok';
+        msg.textContent =
+          '삭제됨 ' + (data.count != null ? data.count : selected.length) + '개' +
+          (Array.isArray(data.deleted) && data.deleted.length ? ': ' + data.deleted.join(', ') : '');
+        await refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    document.getElementById('btn-upload').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      const f = document.getElementById('file').files[0];
+      if (!f) {
+        msg.className = 'msg err';
+        msg.textContent = '파일을 선택하세요.';
+        return;
+      }
+      const fd = new FormData();
+      fd.append('file', f);
+      setBusy(true);
+      try {
+        const r = await fetch(apiUrl('api/upload'), { method: 'POST', body: fd, credentials: 'same-origin' });
+        const data = await r.json().catch(function () { return {}; });
+        if (!r.ok) throw new Error(data.error || r.status);
+        msg.className = 'msg ok';
+        msg.textContent = data.message || '완료';
+        await refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    document.getElementById('btn-download').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      setBusy(true);
+      try {
+        const r = await fetch(apiUrl('api/download'), { credentials: 'same-origin' });
+        const ct = (r.headers.get('content-type') || '').toLowerCase();
+        if (!r.ok) {
+          const text = await r.text();
+          let err = text;
+          try {
+            var j = JSON.parse(text);
+            if (j.error) err = j.error;
+          } catch (_) {}
+          throw new Error(err);
+        }
+        if (ct.indexOf('text/html') === -1 && ct.indexOf('application/octet-stream') === -1) {
+          const text = await r.text();
+          throw new Error(text.slice(0, 200) || '예상하지 못한 응답');
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'index.html';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        msg.className = 'msg ok';
+        msg.textContent = '다운로드를 시작했습니다.';
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    document.getElementById('btn-rollback').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      const sel = document.getElementById('rollback-select');
+      if (sel.disabled || !sel.value) {
+        msg.className = 'msg err';
+        msg.textContent = '롤백할 백업이 없습니다.';
+        return;
+      }
+      if (!confirm('현재 index.html 을 백업한 뒤, 선택한 백업으로 덮어씁니다. 계속할까요?')) return;
+      setBusy(true);
+      try {
+        const data = await api(apiUrl('api/rollback'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backupName: sel.value }),
+        });
+        msg.className = 'msg ok';
+        msg.textContent = '롤백 완료: ' + data.restoredFrom;
+        await refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    document.getElementById('btn-upload-cctv-index').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      const f = document.getElementById('file-cctv-index').files[0];
+      if (!f) { msg.className = 'msg err'; msg.textContent = '파일을 선택하세요.'; return; }
+      const fd = new FormData();
+      fd.append('target', 'index');
+      fd.append('file', f);
+      setBusy(true);
+      try {
+        const r = await fetch(apiUrl('api/cctv/upload'), { method: 'POST', body: fd, credentials: 'same-origin' });
+        const data = await r.json().catch(function () { return {}; });
+        if (!r.ok) throw new Error(data.error || r.status);
+        msg.className = 'msg ok';
+        msg.textContent = data.message || '완료';
+        await refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    document.getElementById('btn-upload-cctv-routes').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      const f = document.getElementById('file-cctv-routes').files[0];
+      if (!f) { msg.className = 'msg err'; msg.textContent = '파일을 선택하세요.'; return; }
+      const fd = new FormData();
+      fd.append('target', 'routes');
+      fd.append('file', f);
+      setBusy(true);
+      try {
+        const r = await fetch(apiUrl('api/cctv/upload'), { method: 'POST', body: fd, credentials: 'same-origin' });
+        const data = await r.json().catch(function () { return {}; });
+        if (!r.ok) throw new Error(data.error || r.status);
+        msg.className = 'msg ok';
+        msg.textContent = data.message || '완료';
+        await refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    async function downloadCctv(target, filename) {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      setBusy(true);
+      try {
+        const r = await fetch(apiUrl('api/cctv/download?target=' + encodeURIComponent(target)), { credentials: 'same-origin' });
+        const ct = (r.headers.get('content-type') || '').toLowerCase();
+        if (!r.ok) {
+          const text = await r.text();
+          let err = text;
+          try { var j = JSON.parse(text); if (j.error) err = j.error; } catch (_) {}
+          throw new Error(err);
+        }
+        if (ct.indexOf('text/html') === -1 && ct.indexOf('application/json') === -1 && ct.indexOf('application/octet-stream') === -1) {
+          const text = await r.text();
+          throw new Error(text.slice(0, 200) || '예상하지 못한 응답');
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        msg.className = 'msg ok';
+        msg.textContent = '다운로드를 시작했습니다.';
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    document.getElementById('btn-download-cctv-index').onclick = function () { downloadCctv('index', 'cctv-index.html'); };
+    document.getElementById('btn-download-cctv-routes').onclick = function () { downloadCctv('routes', 'routes.json'); };
+
+    document.getElementById('btn-rollback-cctv-index').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      const sel = document.getElementById('rollback-cctv-index');
+      if (sel.disabled || !sel.value) {
+        msg.className = 'msg err';
+        msg.textContent = '롤백할 백업이 없습니다.';
+        return;
+      }
+      if (!confirm('현재 cctv_viewer/index.html 을 백업한 뒤, 선택한 백업으로 덮어씁니다. 계속할까요?')) return;
+      setBusy(true);
+      try {
+        const data = await api(apiUrl('api/cctv/rollback'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: 'index', backupName: sel.value }),
+        });
+        msg.className = 'msg ok';
+        msg.textContent = '롤백 완료: ' + data.restoredFrom;
+        await refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    document.getElementById('btn-rollback-cctv-routes').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      const sel = document.getElementById('rollback-cctv-routes');
+      if (sel.disabled || !sel.value) {
+        msg.className = 'msg err';
+        msg.textContent = '롤백할 백업이 없습니다.';
+        return;
+      }
+      if (!confirm('현재 data/routes.json 을 백업한 뒤, 선택한 백업으로 덮어씁니다. 계속할까요?')) return;
+      setBusy(true);
+      try {
+        const data = await api(apiUrl('api/cctv/rollback'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: 'routes', backupName: sel.value }),
+        });
+        msg.className = 'msg ok';
+        msg.textContent = '롤백 완료: ' + data.restoredFrom;
+        await refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    document.getElementById('btn-cctv-index-select-all').onclick = function () {
+      document.querySelectorAll('#backup-cctv-index input[type="checkbox"]').forEach(function (cb) { cb.checked = true; });
+    };
+    document.getElementById('btn-cctv-index-select-none').onclick = function () {
+      document.querySelectorAll('#backup-cctv-index input[type="checkbox"]').forEach(function (cb) { cb.checked = false; });
+    };
+    document.getElementById('btn-cctv-routes-select-all').onclick = function () {
+      document.querySelectorAll('#backup-cctv-routes input[type="checkbox"]').forEach(function (cb) { cb.checked = true; });
+    };
+    document.getElementById('btn-cctv-routes-select-none').onclick = function () {
+      document.querySelectorAll('#backup-cctv-routes input[type="checkbox"]').forEach(function (cb) { cb.checked = false; });
+    };
+
+    document.getElementById('btn-delete-cctv-index').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      const selected = Array.prototype.map.call(
+        document.querySelectorAll('#backup-cctv-index input[type="checkbox"]:checked'),
+        function (cb) { return cb.value; }
+      );
+      if (!selected.length) {
+        msg.className = 'msg err';
+        msg.textContent = '삭제할 백업을 선택하세요.';
+        return;
+      }
+      if (!confirm('선택한 index.html 백업 ' + selected.length + '개를 서버에서 삭제합니다. 계속할까요?')) return;
+      setBusy(true);
+      try {
+        await api(apiUrl('api/cctv/delete-backup'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: 'index', backupNames: selected }),
+        });
+        msg.className = 'msg ok';
+        msg.textContent = '삭제됨 ' + selected.length + '개';
+        await refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    document.getElementById('btn-delete-cctv-routes').onclick = async function () {
+      const msg = document.getElementById('main-msg');
+      msg.textContent = '';
+      const selected = Array.prototype.map.call(
+        document.querySelectorAll('#backup-cctv-routes input[type="checkbox"]:checked'),
+        function (cb) { return cb.value; }
+      );
+      if (!selected.length) {
+        msg.className = 'msg err';
+        msg.textContent = '삭제할 백업을 선택하세요.';
+        return;
+      }
+      if (!confirm('선택한 routes.json 백업 ' + selected.length + '개를 서버에서 삭제합니다. 계속할까요?')) return;
+      setBusy(true);
+      try {
+        await api(apiUrl('api/cctv/delete-backup'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: 'routes', backupNames: selected }),
+        });
+        msg.className = 'msg ok';
+        msg.textContent = '삭제됨 ' + selected.length + '개';
+        await refreshStatus();
+      } catch (e) {
+        msg.className = 'msg err';
+        msg.textContent = String(e.message || e);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    document.getElementById('btn-logout').onclick = async function () {
+      setBusy(true);
+      try {
+        await api(apiUrl('api/logout'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      } catch (_) {}
+      location.reload();
+    };
+
+    (function initVisitStatsExpand() {
+      var det = document.getElementById('visit-stats-expand-details');
+      var wrap = document.getElementById('visit-stats-table-wrap');
+      if (!det || !wrap) return;
+      det.addEventListener('toggle', function () {
+        wrap.classList.toggle('visit-stats-table-wrap--expanded', det.open);
+      });
+    })();
+  </script>
+</body>
+</html>

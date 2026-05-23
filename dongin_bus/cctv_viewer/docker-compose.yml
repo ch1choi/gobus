@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  cctv-viewer:
+    image: choicho/dongin-bus-cctv-viewer:latest
+    container_name: dongin-bus-cctv-viewer
+    ports:
+      - "8888:8888"
+    environment:
+      - NODE_ENV=production
+      - PORT=8888
+      - ITS_API_KEY=${ITS_API_KEY}
+      - DAEJEON_API_KEY=${DAEJEON_API_KEY}
+      - CACHE_TTL=${CACHE_TTL:-900}
+      - STREAM_URL_MAX_AGE=${STREAM_URL_MAX_AGE:-180}
+      - MAX_DISTANCE=${MAX_DISTANCE:-500}
+      - PLAYABLE_ONLY=${PLAYABLE_ONLY:-1}
+      - ITS_BBOX_EXTRA_PADDING=${ITS_BBOX_EXTRA_PADDING:-0.02}
+    restart: unless-stopped
+    networks:
+      - dongin-bus-network
+
+networks:
+  dongin-bus-network:
+    driver: bridge

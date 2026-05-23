@@ -1,0 +1,51 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 환경변수 / 시크릿
+.env
+.env.*
+!.env.example
+docker/env/*.env
+!docker/env/*.env.example
+dongin_bus/dongin_bus_admin-server/admin-server/env/dongin-bus-admin.env
+dongin_bus/dongin_bus_admin-server/admin-server/env/*.env
+!dongin_bus/dongin_bus_admin-server/admin-server/env/*.example.env
+
+# Netlify 로컬
+.netlify/
+
+# 백업 / 아카이브 (관리 UI·서버에서 생성)
+*.zip
+*.tar
+*.tar.gz
+*.bak
+*.bak.*
+index.html_*
+routes.json_*
+index.html.bak*
+
+# SQLite / 운영 데이터
+*.sqlite
+*.sqlite3
+dongin_bus/_metrics/
+_metrics/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# 로그 / 임시
+*.log
+*.tmp
+
+# Claude Code 로컬 설정 (크리덴셜 포함 가능)
+.claude/settings.local.json

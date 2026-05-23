@@ -1,0 +1,34 @@
+# Docker Swarm Stack 설정 파일 (프로덕션)
+version: '3.8'
+
+services:
+  cctv-viewer:
+    image: choicho/dongin-bus-cctv-viewer:latest
+    ports:
+      - "8888:8888"
+    environment:
+      - NODE_ENV=production
+      - PORT=8888
+      - CACHE_TTL=${CACHE_TTL:-900}
+      - STREAM_URL_MAX_AGE=${STREAM_URL_MAX_AGE:-180}
+      - MAX_DISTANCE=${MAX_DISTANCE:-500}
+    env_file:
+      - ../../docker/env/cctv-viewer.env.example
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      placement:
+        constraints:
+          - node.role == worker
+    networks:
+      - dongin-bus-network
+
+networks:
+  dongin-bus-network:
+    driver: overlay

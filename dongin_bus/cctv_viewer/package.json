@@ -1,0 +1,22 @@
+{
+  "name": "dongin-bus-cctv-viewer",
+  "version": "1.0.0",
+  "description": "대전 버스 노선별 CCTV 실시간 뷰어",
+  "scripts": {
+    "dev": "netlify dev",
+    "build": "echo 'Static site - no build needed'",
+    "extract-routes": "node scripts/extract-routes.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.23.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

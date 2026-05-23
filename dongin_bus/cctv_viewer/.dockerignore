@@ -1,0 +1,8 @@
+node_modules
+npm-debug.log
+.env
+.netlify
+.git
+.gitignore
+README.md
+SETUP_COMPLETE.md

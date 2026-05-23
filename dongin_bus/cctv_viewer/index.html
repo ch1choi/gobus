@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>대전 버스 실시간 노선 상황판</title>
+    <style>
+        :root {
+            --bg-color: #0f1114;
+            --card-bg: #1a1d23;
+            --primary-blue: #0052A4;
+            --accent-blue: #4da6ff;
+            --text-main: #e0e6ed;
+            --text-dim: #94a3b8;
+        }
+
+        body {
+            font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+        }
+
+        header {
+            background-color: var(--card-bg);
+            padding: 15px 10px;
+            text-align: center;
+            border-bottom: 2px solid var(--primary-blue);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+
+        h1 {
+            font-size: 1.2rem;
+            margin: 0 0 12px 0;
+            color: var(--accent-blue);
+            letter-spacing: -0.5px;
+        }
+
+        .route-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 12px;
+            background-color: #2d333f;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        button.active {
+            background-color: var(--primary-blue);
+            color: white;
+            box-shadow: 0 0 15px rgba(0, 82, 164, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .status-bar {
+            text-align: center;
+            padding: 10px;
+            font-size: 0.9rem;
+            color: #ffcc00;
+            background-color: #000;
+            border-bottom: 1px solid #333;
+        }
+
+        .cctv-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+            padding: 16px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .cctv-card {
+            background-color: var(--card-bg);
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1px solid #2d333f;
+        }
+
+        .cctv-header {
+            padding: 12px 16px;
+            background-color: #242933;
+            font-size: 0.9rem;
+            font-weight: 700;
+            border-bottom: 1px solid #2d333f;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .video-box {
+            position: relative;
+            width: 100%;
+            padding-top: 56.25%;
+            background-color: #000;
+        }
+
+        video {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+        }
+
+        .loader-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(15, 17, 20, 0.85);
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            z-index: 5;
+            text-align: center;
+            padding: 10px;
+        }
+
+        @media (max-width: 480px) {
+            .cctv-grid { grid-template-columns: 1fr; padding: 10px; }
+            h1 { font-size: 1rem; }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+
+    <header>
+        <h1>대전 버스 실시간 노선 상황판</h1>
+        <div class="route-tabs">
+            <button onclick="changeRoute('501')" id="btn-501">501번</button>
+            <button onclick="changeRoute('108')" id="btn-108">108번</button>
+            <button onclick="changeRoute('511')" id="btn-511">511번</button>
+            <button onclick="changeRoute('513')" id="btn-513">513번</button>
+        </div>
+    </header>
+
+    <div id="statusBar" class="status-bar">📡 대전시 CCTV 데이터를 불러오는 중입니다...</div>
+    <div class="cctv-grid" id="cctvContainer"></div>
+
+    <script>
+        let currentRoute = '501';
+        /** @type {Map<string, { hls?: object, timers: number[] }>} */
+        const hlsPlayers = new Map();
+        let streamRefreshInFlight = null;
+        let streamRefreshQueued = false;
+
+        const CCTV_DEBUG = new URLSearchParams(window.location.search).get('debug') === '1'
+            || localStorage.getItem('cctv_debug') === '1';
+        const HLS_MANIFEST_TIMEOUT_MS = 25000;
+
+        function cctvLog(level, tag, message, meta) {
+            const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+            fn(`[CCTV-${tag}]`, message, meta || '');
+        }
+
+        function redactStreamUrl(url) {
+            if (!url) return url;
+            const s = String(url);
+            return s.length <= 72 ? s : s.slice(0, 40) + '…' + s.slice(-16);
+        }
+
+        function summarizeApiResult(result) {
+            const list = result.data || [];
+            const withUrl = list.filter(c => c.streamUrl).length;
+            const bySource = {};
+            list.forEach(c => {
+                const src = c.source || 'unknown';
+                if (!bySource[src]) bySource[src] = { total: 0, withUrl: 0, noUrl: 0 };
+                bySource[src].total++;
+                if (c.streamUrl) bySource[src].withUrl++;
+                else bySource[src].noUrl++;
+            });
+            return {
+                cctvCount: result.cctvCount,
+                withUrl,
+                noUrl: list.length - withUrl,
+                bySource,
+                playableOnly: result.playableOnly,
+                refreshed: result.refreshed,
+            };
+        }
+
+        function destroyHlsPlayer(videoId) {
+            const state = hlsPlayers.get(videoId);
+            if (!state) return;
+            state.timers.forEach(clearTimeout);
+            if (state.hls) {
+                try { state.hls.destroy(); } catch (e) { /* ignore */ }
+            }
+            hlsPlayers.delete(videoId);
+        }
+
+        function destroyAllHlsPlayers() {
+            Array.from(hlsPlayers.keys()).forEach(destroyHlsPlayer);
+        }
+
+        function buildApiUrl(routeNo, refresh) {
+            const params = new URLSearchParams({ route: routeNo });
+            if (refresh) params.set('refresh', '1');
+            if (CCTV_DEBUG) params.set('debug', '1');
+            return `/api/cctv-route?${params.toString()}`;
+        }
+
+        async function fetchRouteData(routeNo, refresh) {
+            const apiUrl = buildApiUrl(routeNo, refresh);
+            cctvLog('info', 'API', '요청', { route: routeNo, url: apiUrl, refresh: !!refresh });
+            const response = await fetch(apiUrl, { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const result = await response.json();
+            cctvLog('info', 'API', '응답', {
+                route: routeNo,
+                ...summarizeApiResult(result),
+                cacheAge: result.cacheAge,
+                streamUrlMaxAge: result.streamUrlMaxAge,
+            });
+            if (result.error) {
+                throw new Error(result.error);
+            }
+            return result;
+        }
+
+        function renderLoaderWaiting(loader, nearestStop) {
+            loader.style.display = 'flex';
+            loader.style.color = '';
+            loader.innerHTML =
+                `<div>📍 ${nearestStop} 근처</div>` +
+                '<div style="margin-top:5px; font-size:0.7rem;">영상 신호 수신 중...</div>';
+        }
+
+        function renderCctvCards(routeNo, cctvList) {
+            const container = document.getElementById('cctvContainer');
+            container.innerHTML = '';
+
+            cctvList.forEach((cctv, i) => {
+                const videoId = `vid-${i}`;
+                const loaderId = `loader-${i}`;
+                const card = document.createElement('div');
+                card.className = 'cctv-card';
+                card.dataset.cctvName = cctv.name;
+                card.innerHTML = `
+                    <div class="cctv-header">
+                        <span>${cctv.name}</span>
+                        <small style="font-size:0.75rem; color:#94a3b8;">${cctv.distance}m</small>
+                    </div>
+                    <div class="video-box">
+                        <div id="${loaderId}" class="loader-overlay">
+                            <div>📍 ${cctv.nearestStop} 근처</div>
+                            <div style="margin-top:5px; font-size:0.7rem;">영상 신호 수신 중...</div>
+                        </div>
+                        <video id="${videoId}" muted autoplay playsinline controls></video>
+                    </div>
+                `;
+                container.appendChild(card);
+
+                if (cctv.streamUrl) {
+                    initHls(videoId, cctv.streamUrl, loaderId, {
+                        name: cctv.name,
+                        source: cctv.source,
+                        index: i,
+                        format: cctv.format,
+                        routeNo,
+                        nearestStop: cctv.nearestStop,
+                    });
+                } else {
+                    cctvLog('warn', 'NO-URL', '스트림 URL 없음', {
+                        name: cctv.name,
+                        source: cctv.source,
+                        nearestStop: cctv.nearestStop,
+                        distance: cctv.distance,
+                    });
+                    document.getElementById(loaderId).innerHTML =
+                        `<div>제공되는 영상 링크가 없습니다.</div>
+                         <div style="font-size:0.7rem; margin-top:5px;">(${cctv.source})</div>
+                         ${CCTV_DEBUG ? `<div style="font-size:0.65rem;margin-top:6px;color:#ffb74d;">서버: /api/cctv-diagnostics?route=${routeNo}</div>` : ''}`;
+                }
+            });
+        }
+
+        async function refreshStreamsForRoute(routeNo, reason) {
+            if (streamRefreshInFlight) {
+                streamRefreshQueued = true;
+                return streamRefreshInFlight;
+            }
+            cctvLog('warn', 'REFRESH', '스트림 URL 재요청', { route: routeNo, reason });
+            streamRefreshInFlight = (async () => {
+                try {
+                    const result = await fetchRouteData(routeNo, true);
+                    if (!result.data || result.data.length === 0) return;
+
+                    result.data.forEach((cctv, i) => {
+                        const videoId = `vid-${i}`;
+                        const loaderId = `loader-${i}`;
+                        const video = document.getElementById(videoId);
+                        const loader = document.getElementById(loaderId);
+                        if (!video || !loader) return;
+
+                        destroyHlsPlayer(videoId);
+                        if (!cctv.streamUrl) return;
+
+                        renderLoaderWaiting(loader, cctv.nearestStop);
+                        initHls(videoId, cctv.streamUrl, loaderId, {
+                            name: cctv.name,
+                            source: cctv.source,
+                            index: i,
+                            format: cctv.format,
+                            routeNo,
+                            nearestStop: cctv.nearestStop,
+                            urlRefreshAttempted: true,
+                        });
+                    });
+                } catch (err) {
+                    cctvLog('error', 'REFRESH', 'URL 재요청 실패', { route: routeNo, error: err.message });
+                } finally {
+                    streamRefreshInFlight = null;
+                    if (streamRefreshQueued) {
+                        streamRefreshQueued = false;
+                        refreshStreamsForRoute(routeNo, 'queued');
+                    }
+                }
+            })();
+            return streamRefreshInFlight;
+        }
+
+        window.onload = () => {
+            // 재접속·새로고침 시 만료된 ITS URL 대신 서버에서 streamUrl 재발급
+            changeRoute('501', { refresh: true });
+        };
+
+        async function changeRoute(routeNo, options) {
+            options = options || {};
+            currentRoute = routeNo;
+
+            document.querySelectorAll('.route-tabs button').forEach(b => b.classList.remove('active'));
+            document.getElementById(`btn-${routeNo}`).classList.add('active');
+
+            const statusBar = document.getElementById('statusBar');
+            const container = document.getElementById('cctvContainer');
+
+            statusBar.style.display = 'block';
+            statusBar.innerText = `📡 ${routeNo}번 노선 CCTV 데이터를 불러오는 중...`;
+            statusBar.style.color = '#ffcc00';
+
+            destroyAllHlsPlayers();
+            container.innerHTML = '';
+
+            try {
+                const result = await fetchRouteData(routeNo, !!options.refresh);
+
+                statusBar.innerText = `✅ ${routeNo}번 노선: CCTV ${result.cctvCount}개 연동 완료!`;
+                statusBar.style.color = '#00ff00';
+                setTimeout(() => { statusBar.style.display = 'none'; }, 3000);
+
+                if (result.cctvCount === 0) {
+                    const hintHtml = result.hint
+                        ? `<br><small style="color:#94a3b8; display:inline-block; margin-top:8px;">${String(result.hint).replace(/</g, '&lt;')}</small>`
+                        : '';
+                    container.innerHTML = `<div style="color: white; text-align: center; width: 100%; padding: 20px;">해당 노선 근처에 CCTV가 없습니다.${hintHtml}</div>`;
+                    return;
+                }
+
+                renderCctvCards(routeNo, result.data);
+            } catch (err) {
+                cctvLog('error', 'API', '노선 로드 실패', { route: routeNo, error: err.message });
+                statusBar.innerText = `⚠️ 오류: ${err.message}`;
+                statusBar.style.color = '#ff5252';
+                container.innerHTML = `<div style="color: #ff5252; text-align: center; padding: 20px;">
+                    데이터를 불러올 수 없습니다.<br><small>${err.message}</small>
+                </div>`;
+            }
+        }
+
+        function initHls(videoId, streamUrl, loaderId, meta) {
+            const video = document.getElementById(videoId);
+            const loader = document.getElementById(loaderId);
+            meta = meta || {};
+            if (!video || !loader || !streamUrl) return;
+
+            destroyHlsPlayer(videoId);
+            const playerState = { timers: [] };
+            hlsPlayers.set(videoId, playerState);
+
+            cctvLog('info', 'HLS', '재생 시작', {
+                name: meta.name,
+                source: meta.source,
+                format: meta.format,
+                streamUrl: redactStreamUrl(streamUrl),
+            });
+
+            if (window.location.protocol === 'https:' && /^http:\/\//i.test(String(streamUrl))) {
+                loader.style.display = 'flex';
+                loader.style.color = '#ffcc80';
+                loader.innerHTML =
+                    '<div>HTTPS 환경에서 HTTP 영상이 차단되었습니다.</div>' +
+                    '<div style="font-size:0.7rem;margin-top:8px;color:#ffb74d;line-height:1.4;">서버에 <code>ITS_CCTV_TYPE=4</code>(HTTPS HLS) 설정 후 이미지를 다시 배포하세요.</div>';
+                return;
+            }
+
+            function showFatalErr(detail, extra) {
+                cctvLog('error', 'HLS', '재생 실패', { name: meta.name, detail, ...extra });
+                loader.style.display = 'flex';
+                loader.style.color = '#ff5252';
+                loader.innerHTML =
+                    '<div>영상 재생 오류</div>' +
+                    '<div style="font-size:0.72rem;margin-top:8px;line-height:1.35;">' +
+                    (detail || '스트림 연결 실패 또는 일시 장애') + '</div>' +
+                    (CCTV_DEBUG && extra?.hlsDetails
+                        ? `<div style="font-size:0.6rem;margin-top:6px;color:#ffab91;word-break:break-all;">${String(extra.hlsDetails).replace(/</g, '&lt;')}</div>`
+                        : '');
+            }
+
+            function clearManifestTimer() {
+                playerState.timers.forEach(clearTimeout);
+                playerState.timers = [];
+            }
+
+            function onManifestReady() {
+                clearManifestTimer();
+                loader.style.display = 'none';
+                video.play().catch(function (e) {
+                    cctvLog('warn', 'HLS', 'autoplay blocked', { name: meta.name, error: e.message });
+                });
+            }
+
+            function requestFreshUrls(reason) {
+                if (meta.urlRefreshAttempted) return;
+                meta.urlRefreshAttempted = true;
+                refreshStreamsForRoute(meta.routeNo || currentRoute, reason);
+            }
+
+            const manifestTimer = window.setTimeout(function () {
+                cctvLog('warn', 'HLS', '매니페스트 타임아웃', { name: meta.name, ms: HLS_MANIFEST_TIMEOUT_MS });
+                requestFreshUrls('manifest-timeout');
+            }, HLS_MANIFEST_TIMEOUT_MS);
+            playerState.timers.push(manifestTimer);
+
+            let didNetworkRecover = false;
+            let didMediaRecover = false;
+
+            if (Hls.isSupported()) {
+                const hls = new Hls({
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                    maxBufferLength: 30,
+                    xhrSetup: function (xhr) {
+                        try { xhr.withCredentials = false; } catch (e) { /* ignore */ }
+                    },
+                });
+                playerState.hls = hls;
+                hls.loadSource(streamUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                    cctvLog('info', 'HLS', 'MANIFEST_PARSED', { name: meta.name });
+                    onManifestReady();
+                });
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    cctvLog(data.fatal ? 'error' : 'warn', 'HLS', 'ERROR event', {
+                        name: meta.name,
+                        fatal: data.fatal,
+                        type: data.type,
+                        details: data.details,
+                        response: data.response ? { code: data.response.code } : undefined,
+                    });
+                    if (!data.fatal) return;
+
+                    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                        if (!didNetworkRecover) {
+                            didNetworkRecover = true;
+                            hls.startLoad();
+                            return;
+                        }
+                        requestFreshUrls('network-error');
+                        showFatalErr('스트림 URL 만료 또는 네트워크 오류 — 새 URL 요청 중…', {
+                            hlsDetails: `${data.details}${data.response?.code ? ' HTTP' + data.response.code : ''}`,
+                        });
+                        try { hls.destroy(); } catch (e) { /* ignore */ }
+                        return;
+                    }
+
+                    if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !didMediaRecover) {
+                        didMediaRecover = true;
+                        hls.recoverMediaError();
+                        return;
+                    }
+
+                    var hint = data.type === Hls.ErrorTypes.MEDIA_ERROR
+                        ? '미디어 디코딩 실패(스트림 형식/일시 끊김)'
+                        : (data.details || data.reason || '알 수 없는 오류') + '';
+                    showFatalErr(hint, {
+                        hlsDetails: `${data.type}/${data.details}${data.response?.code ? ' HTTP' + data.response.code : ''}`,
+                    });
+                    try { hls.destroy(); } catch (e) { /* ignore */ }
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = streamUrl;
+                video.addEventListener('error', function onErr() {
+                    video.removeEventListener('error', onErr);
+                    requestFreshUrls('native-error');
+                    showFatalErr('네이티브 HLS 재생 실패 — 새 URL 요청 중…', {
+                        hlsDetails: video.error ? `code=${video.error.code}` : '',
+                    });
+                });
+                video.addEventListener('loadedmetadata', function onMeta() {
+                    video.removeEventListener('loadedmetadata', onMeta);
+                    onManifestReady();
+                }, { once: true });
+            } else {
+                clearManifestTimer();
+                showFatalErr('이 브라우저는 HLS 재생을 지원하지 않습니다.');
+            }
+        }
+
+    </script>
+</body>
+</html>
