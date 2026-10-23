@@ -1,5 +1,5 @@
 # Proxmox 서버가 x86_64이므로 플랫폼 고정 (선택 사항; sql.js는 네이티브 모듈 없음)
-FROM --platform=linux/amd64 node:20-alpine
+FROM --platform=linux/amd64 node:24.22.1-alpine
 
 WORKDIR /app
 
